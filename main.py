@@ -5,7 +5,6 @@ import hashlib
 import json
 import os
 import toml
-import discord
 from pathlib import Path
 from typing import Optional
 
@@ -13,9 +12,56 @@ from bot import Bot
 from utils.helpers import sanitize_filename
 
 
-async def get_username_from_token(token: str) -> Optional[str]:
+async def detect_token_type(token: str) -> str:
+    """Detects if a token is a bot token or user token."""
+    # Try bot token first
+    try:
+        import discord
+        temp_client = discord.Client()
+        try:
+            await temp_client.login(token)
+            is_bot = temp_client.user.bot if hasattr(temp_client.user, 'bot') else False
+            await temp_client.close()
+            return "bot" if is_bot else "user"
+        except discord.LoginFailure:
+            await temp_client.close()
+            # If bot login fails, it might be a user token
+            pass
+        except Exception as e:
+            if not temp_client.is_closed():
+                await temp_client.close()
+    except Exception:
+        pass
+    
+    # Try user token
+    try:
+        import selfcord
+        temp_client = selfcord.Client()
+        try:
+            await temp_client.login(token)
+            await temp_client.close()
+            return "user"
+        except Exception:
+            if not temp_client.is_closed():
+                await temp_client.close()
+    except Exception:
+        pass
+    
+    return "unknown"
+
+
+async def get_username_from_token(token: str, token_type: str = None) -> Optional[str]:
     """Gets username from a Discord token."""
-    temp_client = discord.Client()
+    if token_type is None:
+        token_type = await detect_token_type(token)
+    
+    if token_type == "bot":
+        import discord
+        temp_client = discord.Client()
+    else:
+        import selfcord
+        temp_client = selfcord.Client()
+    
     try:
         await temp_client.login(token)
         username = str(temp_client.user)
@@ -47,7 +93,12 @@ async def main():
             token = Path(token_file).read_text().strip()
 
         if token:
-            bots_to_run.append(Bot(token=token, data_dir=Path(".")))
+            token_type = await detect_token_type(token)
+            if token_type == "unknown":
+                print("FATAL: Could not determine token type or token is invalid.")
+            else:
+                print(f"Detected token type: {token_type}")
+                bots_to_run.append(Bot(token=token, data_dir=Path("."), token_type=token_type))
         else:
             print("FATAL: No token found for single mode operation.")
 
@@ -79,13 +130,22 @@ async def main():
             if not token:
                 continue
 
+            print(f"Processing token from {token_file.name}...")
+            token_type = await detect_token_type(token)
+            
+            if token_type == "unknown":
+                print(f"!!! Could not determine token type for {token_file.name}, skipping. !!!")
+                continue
+            
+            print(f"Token type: {token_type}")
+
             token_hash = hashlib.sha1(token.encode()).hexdigest()[:12]
             hashed_dir = data_dir / token_hash
 
             if hashed_dir.is_dir():
                 bot_data_dir = hashed_dir
             else:
-                current_username = await get_username_from_token(token)
+                current_username = await get_username_from_token(token, token_type)
                 if not current_username:
                     continue
 
@@ -123,7 +183,7 @@ async def main():
                         map_updated = True
 
             if bot_data_dir:
-                bots_to_run.append(Bot(token=token, data_dir=bot_data_dir))
+                bots_to_run.append(Bot(token=token, data_dir=bot_data_dir, token_type=token_type))
 
         if map_updated:
             print("Saving updated user map...")

@@ -1,0 +1,9 @@
+discord.py>=2.0.0
+selfcord.py>=1.9.0
+httpx>=0.24.0
+aiofiles>=23.0.0
+pyqrcode>=1.2.1
+pypng>=0.20220715.0
+websockets>=11.0.0
+cryptography>=41.0.0
+toml>=0.10.2

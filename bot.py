@@ -1,6 +1,5 @@
 """Main Bot class with event handlers."""
 
-import discord
 import asyncio
 import re
 import json
@@ -24,18 +23,26 @@ from utils.helpers import (
 
 
 class Bot:
-    def __init__(self, token: str, data_dir: Path):
+    def __init__(self, token: str, data_dir: Path, token_type: str = "bot"):
         self.token = token
         self.data_dir = data_dir
         self.data_dir.mkdir(parents=True, exist_ok=True)
+        self.token_type = token_type
 
         # File paths
         self.notes_file = self.data_dir / "notes.json"
         self.log_file = self.data_dir / "bot.log"
         self.user_tokens_file = self.data_dir / "user-tokens.json"
 
-        # Initialize Discord client
-        self.client = discord.Client()
+        # Initialize Discord client based on token type
+        if token_type == "bot":
+            import discord
+            self.discord = discord
+            self.client = discord.Client()
+        else:  # user/selfbot
+            import selfcord as discord
+            self.discord = discord
+            self.client = discord.Client()
 
         # Initialize handlers
         self.config = ConfigManager(data_dir)
@@ -92,7 +99,7 @@ class Bot:
 
     async def run(self):
         """Starts the bot."""
-        print(f"Starting bot instance in directory: {self.data_dir}")
+        print(f"Starting bot instance ({self.token_type}) in directory: {self.data_dir}")
         self.config.load_config()
 
         # Initialize alts handler after config is loaded
@@ -104,14 +111,21 @@ class Bot:
         handler = logging.FileHandler(
             filename=self.log_file, encoding="utf-8", mode="w"
         )
-        discord.utils.setup_logging(handler=handler, root=False)
+        
+        # Handle logging setup differences between discord.py and selfcord
+        try:
+            self.discord.utils.setup_logging(handler=handler, root=False)
+        except AttributeError:
+            # selfcord might not have setup_logging
+            logging.basicConfig(handlers=[handler], level=logging.INFO)
 
         try:
             await self.client.start(self.token)
-        except discord.LoginFailure:
-            print(f"!!! LOGIN FAILED for bot in {self.data_dir}. Check token. !!!")
         except Exception as e:
-            print(f"An unexpected error occurred for bot in {self.data_dir}: {e}")
+            if "LoginFailure" in str(type(e).__name__):
+                print(f"!!! LOGIN FAILED for {self.token_type} in {self.data_dir}. Check token. !!!")
+            else:
+                print(f"An unexpected error occurred for {self.token_type} in {self.data_dir}: {e}")
 
     def load_notes(self):
         """Loads notes from disk."""
@@ -212,10 +226,12 @@ class Bot:
 
             return sent_message
 
-        except discord.Forbidden:
-            print(f"[{self.client.user}] Missing permissions in channel {channel.id}")
         except Exception as e:
-            print(f"[{self.client.user}] Error sending message: {e}")
+            error_name = type(e).__name__
+            if "Forbidden" in error_name:
+                print(f"[{self.client.user}] Missing permissions in channel {channel.id}")
+            else:
+                print(f"[{self.client.user}] Error sending message: {e}")
         return None
 
     async def cleanup_forward_cache(self):
@@ -271,7 +287,7 @@ class Bot:
                 )
 
     async def handle_command(
-        self, message: discord.Message, command_name: str, args: list
+        self, message, command_name: str, args: list
     ):
         """Routes commands to appropriate handlers."""
         try:
@@ -290,17 +306,17 @@ class Bot:
 
     async def on_ready(self):
         """Called when the bot is ready."""
-        print(f"Logged in as {self.client.user} (ID: {self.client.user.id})")
+        print(f"Logged in as {self.client.user} (ID: {self.client.user.id}) [Type: {self.token_type}]")
 
         # Set status
         status_map = {
-            "online": discord.Status.online,
-            "invisible": discord.Status.invisible,
-            "idle": discord.Status.idle,
-            "dnd": discord.Status.dnd,
+            "online": self.discord.Status.online,
+            "invisible": self.discord.Status.invisible,
+            "idle": self.discord.Status.idle,
+            "dnd": self.discord.Status.dnd,
         }
         configured_status = status_map.get(
-            self.config.discord_status_str.lower(), discord.Status.online
+            self.config.discord_status_str.lower(), self.discord.Status.online
         )
 
         try:
@@ -322,7 +338,7 @@ class Bot:
         """Called when a user's presence changes."""
         pass
 
-    async def on_message(self, message: discord.Message):
+    async def on_message(self, message):
         """Called when a message is received."""
         if message.author.id == self.client.user.id:
             return
@@ -392,7 +408,7 @@ class Bot:
 
         await self.handle_command(message, parts[0].lower(), parts[1:])
 
-    async def handle_asteroide_response(self, message: discord.Message):
+    async def handle_asteroide_response(self, message):
         """Handles Asteroide bot responses for alts tracking."""
         try:
             if not re.search(r"\S+ has \d+ alts:", message.content):
@@ -402,7 +418,7 @@ class Bot:
         except Exception as e:
             print(f"[{self.client.user}] Error handling Asteroide response: {e}")
 
-    async def on_message_edit(self, before: discord.Message, after: discord.Message):
+    async def on_message_edit(self, before, after):
         """Called when a message is edited."""
         if after.author.id == self.client.user.id:
             return
@@ -469,13 +485,14 @@ class Bot:
                 if bot_msg:
                     history_data["bot_msg"] = bot_msg
 
-        except discord.Forbidden as e:
-            if e.code != 50013:
+        except Exception as e:
+            error_name = type(e).__name__
+            if "Forbidden" in error_name and hasattr(e, 'code') and e.code != 50013:
                 print(f"[{self.client.user}] Permission error on_message_edit: {e}")
         except Exception as e:
             print(f"[{self.client.user}] Error in on_message_edit: {e}")
 
-    async def on_message_delete(self, message: discord.Message):
+    async def on_message_delete(self, message):
         """Called when a message is deleted."""
         gid = message.guild.id if message.guild else None
         if gid is not None and not self.config.get_guild_config(
@@ -514,8 +531,9 @@ class Bot:
 
         try:
             await self.bot_send(message.channel, content=content_to_send)
-        except discord.Forbidden as e:
-            if e.code != 50013:
+        except Exception as e:
+            error_name = type(e).__name__
+            if "Forbidden" in error_name and hasattr(e, 'code') and e.code != 50013:
                 print(f"[{self.client.user}] Permission error on_message_delete: {e}")
         except Exception as e:
             print(f"[{self.client.user}] Critical error in on_message_delete: {e}")
@@ -525,7 +543,7 @@ class Bot:
             if message.id in self.edit_history:
                 del self.edit_history[message.id]
 
-    async def _handle_sync_message(self, message: discord.Message):
+    async def _handle_sync_message(self, message):
         """Handles message syncing to configured channel."""
         if not self.config.sync_channel_id or (
             message.guild and str(message.channel.id) == self.config.sync_channel_id
@@ -578,7 +596,7 @@ class Bot:
                         import io
 
                         files_to_send.append(
-                            discord.File(
+                            self.discord.File(
                                 io.BytesIO(response.content), filename=att.filename
                             )
                         )
