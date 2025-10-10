@@ -14,38 +14,51 @@ from utils.helpers import sanitize_filename
 
 async def detect_token_type(token: str) -> str:
     """Detects if a token is a bot token or user token."""
-    # Try bot token first
-    try:
-        import discord
-        temp_client = discord.Client()
-        try:
-            await temp_client.login(token)
-            is_bot = temp_client.user.bot if hasattr(temp_client.user, 'bot') else False
-            await temp_client.close()
-            return "bot" if is_bot else "user"
-        except discord.LoginFailure:
-            await temp_client.close()
-            # If bot login fails, it might be a user token
-            pass
-        except Exception as e:
-            if not temp_client.is_closed():
-                await temp_client.close()
-    except Exception:
-        pass
     
-    # Try user token
+    # First, try to detect by token format
+    # Bot tokens typically have 3 parts separated by dots
+    # User tokens are longer and don't have this structure
+    parts = token.split('.')
+    
+    if len(parts) == 3:
+        # Likely a bot token, verify by attempting login
+        try:
+            import discord
+            temp_client = discord.Client()
+            try:
+                await asyncio.wait_for(temp_client.login(token), timeout=10)
+                is_bot = temp_client.user.bot if hasattr(temp_client.user, 'bot') else True
+                await temp_client.close()
+                return "bot" if is_bot else "user"
+            except asyncio.TimeoutError:
+                print(f"Timeout during bot token detection")
+                if not temp_client.is_closed():
+                    await temp_client.close()
+            except Exception as e:
+                print(f"Bot login attempt failed: {type(e).__name__}: {e}")
+                if not temp_client.is_closed():
+                    await temp_client.close()
+        except ImportError:
+            print("discord.py not installed, skipping bot token detection")
+    
+    # Try as user token
     try:
         import selfcord
         temp_client = selfcord.Client()
         try:
-            await temp_client.login(token)
+            await asyncio.wait_for(temp_client.login(token), timeout=10)
             await temp_client.close()
             return "user"
-        except Exception:
+        except asyncio.TimeoutError:
+            print(f"Timeout during user token detection")
             if not temp_client.is_closed():
                 await temp_client.close()
-    except Exception:
-        pass
+        except Exception as e:
+            print(f"User login attempt failed: {type(e).__name__}: {e}")
+            if not temp_client.is_closed():
+                await temp_client.close()
+    except ImportError:
+        print("selfcord.py not installed, skipping user token detection")
     
     return "unknown"
 
@@ -56,22 +69,37 @@ async def get_username_from_token(token: str, token_type: str = None) -> Optiona
         token_type = await detect_token_type(token)
     
     if token_type == "bot":
-        import discord
-        temp_client = discord.Client()
+        try:
+            import discord
+            temp_client = discord.Client()
+        except ImportError:
+            print("discord.py not installed")
+            return None
     else:
-        import selfcord
-        temp_client = selfcord.Client()
+        try:
+            import selfcord
+            temp_client = selfcord.Client()
+        except ImportError:
+            print("selfcord.py not installed")
+            return None
     
     try:
-        await temp_client.login(token)
+        await asyncio.wait_for(temp_client.login(token), timeout=10)
         username = str(temp_client.user)
         await temp_client.close()
         return username
-    except Exception:
+    except asyncio.TimeoutError:
+        print(f"Timeout getting username for {token_type} token")
+        return None
+    except Exception as e:
+        print(f"Error getting username: {type(e).__name__}: {e}")
         return None
     finally:
         if not temp_client.is_closed():
-            await temp_client.close()
+            try:
+                await temp_client.close()
+            except:
+                pass
 
 
 async def main():
@@ -93,6 +121,7 @@ async def main():
             token = Path(token_file).read_text().strip()
 
         if token:
+            print("Detecting token type...")
             token_type = await detect_token_type(token)
             if token_type == "unknown":
                 print("FATAL: Could not determine token type or token is invalid.")
@@ -122,7 +151,7 @@ async def main():
 
         map_updated = False
 
-        for token_file in token_dir.iterdir():
+        for token_file in sorted(token_dir.iterdir()):
             if not token_file.is_file():
                 continue
 
@@ -130,7 +159,7 @@ async def main():
             if not token:
                 continue
 
-            print(f"Processing token from {token_file.name}...")
+            print(f"\nProcessing token from {token_file.name}...")
             token_type = await detect_token_type(token)
             
             if token_type == "unknown":
@@ -144,12 +173,16 @@ async def main():
 
             if hashed_dir.is_dir():
                 bot_data_dir = hashed_dir
+                print(f"Using existing data directory: {hashed_dir}")
             else:
+                print(f"Getting username for token...")
                 current_username = await get_username_from_token(token, token_type)
                 if not current_username:
+                    print(f"!!! Could not get username for {token_file.name}, skipping. !!!")
                     continue
 
                 sanitized_current_user = sanitize_filename(current_username)
+                print(f"Username: {current_username}")
 
                 stored_username = user_map.get(token_hash)
                 if stored_username and stored_username != sanitized_current_user:
@@ -186,14 +219,15 @@ async def main():
                 bots_to_run.append(Bot(token=token, data_dir=bot_data_dir, token_type=token_type))
 
         if map_updated:
-            print("Saving updated user map...")
+            print("\nSaving updated user map...")
             data_dir.mkdir(exist_ok=True)
             user_map_path.write_text(json.dumps(user_map, indent=4))
 
     if not bots_to_run:
-        return print("No valid bot instances to run. Exiting.")
+        return print("\nNo valid bot instances to run. Exiting.")
 
-    await asyncio.gather(*[bot.run() for bot in bots_to_run])
+    print(f"\nStarting {len(bots_to_run)} bot instance(s)...\n")
+    await asyncio.gather(*[bot.run() for bot in bots_to_run], return_exceptions=True)
 
 
 if __name__ == "__main__":
