@@ -96,7 +96,7 @@ class Bot:
             "note": "Usage: `{p}note <create|get|list|delete> <public|private> [name] [content]`\nManages personal (private) or server-wide (public) notes.",
             "reload-config": "Usage: `{p}reload-config`\nReloads `config.toml`, `notes.json`, and `alts_data.json` from disk.",
             "resend": "Usage: `{p}resend <number>`\nDeletes the command and resends the last `X` messages sent by the bot in the current channel.",
-            "ip": "Usage: `{p}ip <info|db> [args]`\n- `info <ip>`: Fetches live information about an IP address (supports IPv4 and IPv6).\n- `db info <ip>`: Shows cached IP information from the database.\n- `db list [page]`: Lists all IPs in the database.\n- `db search <term>`: Searches IPs by country, city, or ISP.\n- `db refresh`: Updates all cached IP information.",
+            "ip": "Usage: `{p}ip <info|db> [args]`\n- `info <ip>`: Fetches live information about an IP address (supports IPv4 and IPv6).\n- `db info <ip>`: Shows cached IP information from the database.\n- `db list [page]`: Lists all IPs in the database.\n- `db search <term>`: Searches IPs by country, city, or ISP.\n- `db refresh`: Updates all cached IP information.\n- `db stats`: Shows database statistics.",
         }
 
         # Register event handlers
@@ -117,21 +117,12 @@ class Bot:
 
         # Trump command
         @self.tree.command(name="trump", description="Get a random Trump quote")
+        @self.app_commands.describe(ephemeral="Show response only to you (default: True)")
         @self.app_commands.allowed_installs(guilds=True, users=True)
         @self.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
-        async def trump_slash(interaction: self.discord.Interaction):
-            await interaction.response.defer()
+        async def trump_slash(interaction: self.discord.Interaction, ephemeral: bool = True):
+            await interaction.response.defer(ephemeral=ephemeral)
             
-            # Create a mock message object
-            class MockMessage:
-                def __init__(self, interaction):
-                    self.channel = interaction.channel
-                    self.guild = interaction.guild
-                    self.author = interaction.user
-            
-            mock_msg = MockMessage(interaction)
-            
-            # Call the text command
             import httpx
             try:
                 async with httpx.AsyncClient() as client:
@@ -141,24 +132,17 @@ class Bot:
                     )
                     response.raise_for_status()
                     quote = response.json().get("message", "Could not retrieve a quote.")
-                    await interaction.followup.send(f'"{quote}" ~Donald Trump')
+                    await interaction.followup.send(f'"{quote}" ~Donald Trump', ephemeral=ephemeral)
             except Exception as e:
-                await interaction.followup.send(f"Sorry, an error occurred: {type(e).__name__}")
+                await interaction.followup.send(f"Sorry, an error occurred: {type(e).__name__}", ephemeral=ephemeral)
 
         # Websites command
         @self.tree.command(name="websites", description="Check status of configured websites")
+        @self.app_commands.describe(ephemeral="Show response only to you (default: True)")
         @self.app_commands.allowed_installs(guilds=True, users=True)
         @self.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
-        async def websites_slash(interaction: self.discord.Interaction):
-            await interaction.response.defer()
-            
-            class MockMessage:
-                def __init__(self, interaction):
-                    self.channel = interaction.channel
-                    self.guild = interaction.guild
-                    self.author = interaction.user
-            
-            mock_msg = MockMessage(interaction)
+        async def websites_slash(interaction: self.discord.Interaction, ephemeral: bool = True):
+            await interaction.response.defer(ephemeral=ephemeral)
             
             gid = interaction.guild.id if interaction.guild else None
             sites = self.config.get_guild_config(
@@ -190,27 +174,30 @@ class Bot:
                 final_output.extend(friend_res)
             
             content = "\n".join(final_output) if final_output else "No websites are configured."
-            await interaction.followup.send(content)
+            await interaction.followup.send(content, ephemeral=ephemeral)
 
         # IP Info command
         @self.tree.command(name="ip", description="Get information about an IP address")
-        @self.app_commands.describe(ip="The IP address to look up (IPv4 or IPv6)")
+        @self.app_commands.describe(
+            ip="The IP address to look up (IPv4 or IPv6)",
+            ephemeral="Show response only to you (default: True)"
+        )
         @self.app_commands.allowed_installs(guilds=True, users=True)
         @self.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
-        async def ip_slash(interaction: self.discord.Interaction, ip: str):
-            await interaction.response.defer()
+        async def ip_slash(interaction: self.discord.Interaction, ip: str, ephemeral: bool = True):
+            await interaction.response.defer(ephemeral=ephemeral)
             
             from utils.helpers import is_valid_ip, is_valid_ipv6
             from utils.constants import COUNTRY_FLAGS
             
             if not is_valid_ip(ip):
-                await interaction.followup.send("❌ Invalid IP address format")
+                await interaction.followup.send("❌ Invalid IP address format", ephemeral=ephemeral)
                 return
             
             ip_data = await self.ip_handler.fetch_ip_info(ip)
             
             if not ip_data:
-                await interaction.followup.send(f"❌ Failed to fetch info for `{ip}`")
+                await interaction.followup.send(f"❌ Failed to fetch info for `{ip}`", ephemeral=ephemeral)
                 return
             
             flag = COUNTRY_FLAGS.get(ip_data.get("countryCode", ""), "🌐")
@@ -245,18 +232,21 @@ class Bot:
             if ip_data.get("hosting"):
                 output.append(f"**VPS/Hosting:** Yes")
             
-            await interaction.followup.send("\n".join(output))
+            await interaction.followup.send("\n".join(output), ephemeral=ephemeral)
 
         # Alts command
         @self.tree.command(name="alts", description="Look up a user's known alts and IPs")
-        @self.app_commands.describe(username="The username to look up")
+        @self.app_commands.describe(
+            username="The username to look up",
+            ephemeral="Show response only to you (default: True)"
+        )
         @self.app_commands.allowed_installs(guilds=True, users=True)
         @self.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
-        async def alts_slash(interaction: self.discord.Interaction, username: str):
-            await interaction.response.defer()
+        async def alts_slash(interaction: self.discord.Interaction, username: str, ephemeral: bool = True):
+            await interaction.response.defer(ephemeral=ephemeral)
             
             if not str(interaction.user.id) in self.config.admin_ids:
-                await interaction.followup.send("❌ This command is admin-only.")
+                await interaction.followup.send("❌ This command is admin-only.", ephemeral=True)
                 return
             
             from utils.helpers import format_alt_name, format_alts_grid, is_valid_ipv4, is_valid_ipv6
@@ -283,7 +273,7 @@ class Bot:
                         break
             
             if not found_user:
-                await interaction.followup.send(f"❌ No data for `{search_term}`")
+                await interaction.followup.send(f"❌ No data for `{search_term}`", ephemeral=ephemeral)
                 return
             
             data = self.alts_handler.alts_data[found_user]
@@ -308,28 +298,67 @@ class Bot:
                 f"\n*First seen: {data.get('first_seen', 'N/A')[:10]} | Last updated: {data.get('last_updated', 'N/A')[:10]}*"
             )
             
-            await interaction.followup.send("\n".join(output))
+            await interaction.followup.send("\n".join(output), ephemeral=ephemeral)
+
+        # Pings command
+        @self.tree.command(name="pings", description="Ping configured devices")
+        @self.app_commands.describe(ephemeral="Show response only to you (default: True)")
+        @self.app_commands.allowed_installs(guilds=True, users=True)
+        @self.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+        async def pings_slash(interaction: self.discord.Interaction, ephemeral: bool = True):
+            await interaction.response.defer(ephemeral=ephemeral)
+            
+            async def _ping(hostname: str):
+                try:
+                    proc = await asyncio.create_subprocess_exec(
+                        "ping",
+                        "-c",
+                        "1",
+                        "-W",
+                        "1",
+                        hostname,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+                    await proc.wait()
+                    return f"- `{hostname.replace('.liforra.de', '')}`: {'Responding' if proc.returncode == 0 else 'Unreachable'}"
+                except Exception as e:
+                    return f"- `{hostname.replace('.liforra.de', '')}`: Error ({type(e).__name__})"
+
+            devices = [
+                "alhena.liforra.de",
+                "sirius.liforra.de",
+                "chaosserver.liforra.de",
+                "antares.liforra.de",
+            ]
+            results = [
+                "**Device Ping Status:**",
+                *await asyncio.gather(*[_ping(dev) for dev in devices]),
+            ]
+            await interaction.followup.send("\n".join(results), ephemeral=ephemeral)
 
         # Help command
         @self.tree.command(name="help", description="Show available commands")
+        @self.app_commands.describe(ephemeral="Show response only to you (default: True)")
         @self.app_commands.allowed_installs(guilds=True, users=True)
         @self.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
-        async def help_slash(interaction: self.discord.Interaction):
+        async def help_slash(interaction: self.discord.Interaction, ephemeral: bool = True):
             p = self.config.get_prefix(interaction.guild.id if interaction.guild else None)
             
             help_text = (
                 f"**Text Commands:** Use prefix `{p}` followed by:\n"
                 f"`trump`, `websites`, `pings`, `note`, `ip`, `help`\n\n"
                 f"**Slash Commands:** Available via `/`:\n"
-                f"`/trump`, `/websites`, `/ip`, `/alts`, `/help`\n\n"
-                f"*Type `{p}help <command>` for detailed text command info.*"
+                f"`/trump`, `/websites`, `/ip`, `/alts`, `/pings`, `/help`\n\n"
+                f"*Type `{p}help <command>` for detailed text command info.*\n"
+                f"*All slash commands have an `ephemeral` option (default: True)*"
             )
             
             if str(interaction.user.id) in self.config.admin_ids:
                 admin_cmds = ", ".join(f"`{cmd}`" for cmd in self.admin_commands.keys())
                 help_text += f"\n\n**Admin Commands:** {admin_cmds}"
             
-            await interaction.response.send_message(help_text)
+            await interaction.response.send_message(help_text, ephemeral=ephemeral)
 
     async def run(self):
         """Starts the bot."""
