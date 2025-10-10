@@ -480,6 +480,7 @@ async def command_ip(self, message: discord.Message, args: List[str]):
             message.channel,
             content=f"❌ Unknown subcommand. Use `{p}help ip` for usage",
         )
+    
     async def command_help(self, message: discord.Message, args: List[str]):
         """Shows help information."""
         p = self.bot.config.get_prefix(message.guild.id if message.guild else None)
