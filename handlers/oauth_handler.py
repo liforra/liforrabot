@@ -69,7 +69,7 @@ class OAuthHandler:
         """Generates the authorization required message."""
         return (
             f"🔒 **Authorization Required**\n\n"
-            f"{user_mention}, you need to authorize this bot before using commands.\n\n"
+            f"{user_mention}, you need to authorize this bot before using commands.\n\nThis is to prevent Rate Limits from our APIs.\n\n"
             f"**Click here to authorize:**\n"
             f"{self.oauth_url}\n\n"
             f"*After authorizing, try your command again.*"
