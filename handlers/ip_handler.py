@@ -111,40 +111,39 @@ class IPHandler:
 
         return results
 
-    def format_ip_with_geo(self, ip: str) -> str:
-        """Formats an IP address with flag, region, VPN detection, etc."""
-        # Determine if IPv6 for link formatting
-        if is_valid_ipv6(ip):
-            ip_url = f"https://whatismyipaddress.com/ip/{ip}"
-        else:
-            ip_url = f"https://whatismyipaddress.com/ip/{ip}"
+def format_ip_with_geo(self, ip: str) -> str:
+    """Formats an IP address with flag, region, VPN detection, etc."""
+    # IPv6 addresses don't work well in markdown links, so display them as plain text
+    if is_valid_ipv6(ip):
+        ip_display = f"`{ip}`"
+    else:
+        ip_url = f"https://whatismyipaddress.com/ip/{ip}"
+        ip_display = f"[{ip}](<{ip_url}>)"
 
-        ip_link = f"[{ip}](<{ip_url}>)"
+    if ip not in self.ip_geo_data:
+        return f"🌐 {ip_display}"
 
-        if ip not in self.ip_geo_data:
-            return f"🌐 {ip_link}"
+    geo = self.ip_geo_data[ip]
+    flag = COUNTRY_FLAGS.get(geo.get("countryCode", ""), "🌐")
 
-        geo = self.ip_geo_data[ip]
-        flag = COUNTRY_FLAGS.get(geo.get("countryCode", ""), "🌐")
+    info_parts = []
+    region_name = geo.get("regionName", geo.get("region", ""))
+    if region_name:
+        info_parts.append(region_name)
 
-        info_parts = []
-        region_name = geo.get("regionName", geo.get("region", ""))
-        if region_name:
-            info_parts.append(region_name)
+    # Check for VPN provider in ISP/org field
+    vpn_provider = self.detect_vpn_provider(geo.get("isp", ""), geo.get("org", ""))
 
-        # Check for VPN provider in ISP/org field
-        vpn_provider = self.detect_vpn_provider(geo.get("isp", ""), geo.get("org", ""))
+    if vpn_provider:
+        info_parts.append(f"({vpn_provider})")
+    elif geo.get("proxy"):
+        info_parts.append("(Proxy)")
 
-        if vpn_provider:
-            info_parts.append(f"({vpn_provider})")
-        elif geo.get("proxy"):
-            info_parts.append("(Proxy)")
+    if geo.get("hosting"):
+        info_parts.append("(VPS)")
 
-        if geo.get("hosting"):
-            info_parts.append("(VPS)")
+    final_string = f"{flag} {ip_display}"
+    if info_parts:
+        final_string += f" | {' '.join(info_parts)}"
 
-        final_string = f"{flag} {ip_link}"
-        if info_parts:
-            final_string += f" | {' '.join(info_parts)}"
-
-        return final_string
+    return final_string

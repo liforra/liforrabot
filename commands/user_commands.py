@@ -240,227 +240,234 @@ class UserCommands:
         else:
             await self.bot.bot_send(message.channel, content=usage)
 
-    async def command_ip(self, message: discord.Message, args: List[str]):
-        """IP information and database management."""
-        from utils.constants import COUNTRY_FLAGS
+async def command_ip(self, message: discord.Message, args: List[str]):
+    """IP information and database management."""
+    from utils.constants import COUNTRY_FLAGS
+    from utils.helpers import is_valid_ipv6
 
-        p = self.bot.config.get_prefix(message.guild.id if message.guild else None)
+    p = self.bot.config.get_prefix(message.guild.id if message.guild else None)
 
-        if not args:
+    if not args:
+        return await self.bot.bot_send(
+            message.channel,
+            content=self.bot.command_help_texts["ip"].format(p=p),
+        )
+
+    subcommand = args[0].lower()
+
+    if subcommand == "info":
+        if len(args) < 2:
             return await self.bot.bot_send(
-                message.channel,
-                content=self.bot.command_help_texts["ip"].format(p=p),
+                message.channel, content=f"Usage: `{p}ip info <ip>`"
             )
 
-        subcommand = args[0].lower()
+        ip = args[1]
+        if not is_valid_ip(ip):
+            return await self.bot.bot_send(
+                message.channel, content="❌ Invalid IP address format"
+            )
 
-        if subcommand == "info":
-            if len(args) < 2:
+        await self.bot.bot_send(message.channel, f"⚙️ Fetching info for `{ip}`...")
+
+        ip_data = await self.bot.ip_handler.fetch_ip_info(ip)
+
+        if not ip_data:
+            return await self.bot.bot_send(
+                message.channel, content=f"❌ Failed to fetch info for `{ip}`"
+            )
+
+        flag = COUNTRY_FLAGS.get(ip_data.get("countryCode", ""), "🌐")
+
+        # Format IP display based on type
+        if is_valid_ipv6(ip):
+            ip_header = f"**IP Information for `{ip}`:**"
+        else:
+            ip_header = f"**IP Information for [{ip}](<https://whatismyipaddress.com/ip/{ip}>):**"
+
+        output = [
+            ip_header,
+            f"{flag} **Country:** {ip_data.get('country', 'N/A')} ({ip_data.get('countryCode', 'N/A')})",
+            f"**Region:** {ip_data.get('regionName', 'N/A')}",
+            f"**City:** {ip_data.get('city', 'N/A')}",
+            f"**ZIP:** {ip_data.get('zip', 'N/A')}",
+            f"**Coordinates:** {ip_data.get('lat', 'N/A')}, {ip_data.get('lon', 'N/A')}",
+            f"**Timezone:** {ip_data.get('timezone', 'N/A')}",
+            f"**ISP:** {ip_data.get('isp', 'N/A')}",
+            f"**Organization:** {ip_data.get('org', 'N/A')}",
+            f"**AS:** {ip_data.get('as', 'N/A')}",
+        ]
+
+        # Check for VPN provider
+        vpn_provider = self.bot.ip_handler.detect_vpn_provider(
+            ip_data.get("isp", ""), ip_data.get("org", "")
+        )
+
+        if vpn_provider:
+            output.append(f"**VPN Provider:** {vpn_provider}")
+        elif ip_data.get("proxy"):
+            output.append(f"**Proxy/VPN:** Yes")
+
+        if ip_data.get("hosting"):
+            output.append(f"**VPS/Hosting:** Yes")
+
+        await self.bot.bot_send(message.channel, content="\n".join(output))
+
+    elif subcommand == "db":
+        if len(args) < 2:
+            return await self.bot.bot_send(
+                message.channel,
+                content=f"Usage: `{p}ip db <info|list|search|refresh> [args]`",
+            )
+
+        db_subcommand = args[1].lower()
+
+        if db_subcommand == "info":
+            if len(args) < 3:
                 return await self.bot.bot_send(
-                    message.channel, content=f"Usage: `{p}ip info <ip>`"
+                    message.channel, content=f"Usage: `{p}ip db info <ip>`"
                 )
 
-            ip = args[1]
-            if not is_valid_ip(ip):
+            ip = args[2]
+            if ip not in self.bot.ip_handler.ip_geo_data:
                 return await self.bot.bot_send(
-                    message.channel, content="❌ Invalid IP address format"
+                    message.channel,
+                    content=f"❌ No data for `{ip}` in database",
                 )
 
-            await self.bot.bot_send(message.channel, f"⚙️ Fetching info for `{ip}`...")
+            geo = self.bot.ip_handler.ip_geo_data[ip]
+            flag = COUNTRY_FLAGS.get(geo.get("countryCode", ""), "🌐")
 
-            ip_data = await self.bot.ip_handler.fetch_ip_info(ip)
-
-            if not ip_data:
-                return await self.bot.bot_send(
-                    message.channel, content=f"❌ Failed to fetch info for `{ip}`"
-                )
-
-            flag = COUNTRY_FLAGS.get(ip_data.get("countryCode", ""), "🌐")
+            # Format IP display based on type
+            if is_valid_ipv6(ip):
+                ip_header = f"**Cached IP Information for `{ip}`:**"
+            else:
+                ip_header = f"**Cached IP Information for [{ip}](<https://whatismyipaddress.com/ip/{ip}>):**"
 
             output = [
-                f"**IP Information for [{ip}](<https://whatismyipaddress.com/ip/{ip}>):**",
-                f"{flag} **Country:** {ip_data.get('country', 'N/A')} ({ip_data.get('countryCode', 'N/A')})",
-                f"**Region:** {ip_data.get('regionName', 'N/A')}",
-                f"**City:** {ip_data.get('city', 'N/A')}",
-                f"**ZIP:** {ip_data.get('zip', 'N/A')}",
-                f"**Coordinates:** {ip_data.get('lat', 'N/A')}, {ip_data.get('lon', 'N/A')}",
-                f"**Timezone:** {ip_data.get('timezone', 'N/A')}",
-                f"**ISP:** {ip_data.get('isp', 'N/A')}",
-                f"**Organization:** {ip_data.get('org', 'N/A')}",
-                f"**AS:** {ip_data.get('as', 'N/A')}",
+                ip_header,
+                f"{flag} **Country:** {geo.get('country', 'N/A')} ({geo.get('countryCode', 'N/A')})",
+                f"**Region:** {geo.get('regionName', 'N/A')}",
+                f"**City:** {geo.get('city', 'N/A')}",
+                f"**ISP:** {geo.get('isp', 'N/A')}",
+                f"**Organization:** {geo.get('org', 'N/A')}",
             ]
 
             # Check for VPN provider
             vpn_provider = self.bot.ip_handler.detect_vpn_provider(
-                ip_data.get("isp", ""), ip_data.get("org", "")
+                geo.get("isp", ""), geo.get("org", "")
             )
 
             if vpn_provider:
                 output.append(f"**VPN Provider:** {vpn_provider}")
-            elif ip_data.get("proxy"):
+            elif geo.get("proxy"):
                 output.append(f"**Proxy/VPN:** Yes")
 
-            if ip_data.get("hosting"):
+            if geo.get("hosting"):
                 output.append(f"**VPS/Hosting:** Yes")
+
+            output.append(
+                f"**Last Updated:** {geo.get('last_updated', 'N/A')[:10]}"
+            )
 
             await self.bot.bot_send(message.channel, content="\n".join(output))
 
-        elif subcommand == "db":
-            if len(args) < 2:
+        elif db_subcommand == "list":
+            page = int(args[2]) if len(args) > 2 and args[2].isdigit() else 1
+            per_page = 20
+
+            ips = sorted(self.bot.ip_handler.ip_geo_data.keys())
+            start = (page - 1) * per_page
+            page_ips = ips[start : start + per_page]
+            total_pages = (len(ips) + per_page - 1) // per_page
+
+            if not page_ips:
+                return await self.bot.bot_send(
+                    message.channel, content="❌ Page not found"
+                )
+
+            output = [f"**Cached IPs (Page {page}/{total_pages}):**"]
+            for ip in page_ips:
+                output.append(f"• {self.bot.ip_handler.format_ip_with_geo(ip)}")
+
+            if total_pages > page:
+                output.append(f"\nUse `{p}ip db list {page + 1}` for next page.")
+
+            await self.bot.bot_send(message.channel, content="\n".join(output))
+
+        elif db_subcommand == "search":
+            if len(args) < 3:
+                return await self.bot.bot_send(
+                    message.channel, content=f"Usage: `{p}ip db search <term>`"
+                )
+
+            search_term = " ".join(args[2:]).lower()
+            results = []
+
+            for ip, geo in self.bot.ip_handler.ip_geo_data.items():
+                searchable = " ".join(
+                    [
+                        geo.get("country", ""),
+                        geo.get("regionName", ""),
+                        geo.get("city", ""),
+                        geo.get("isp", ""),
+                        geo.get("org", ""),
+                    ]
+                ).lower()
+
+                if search_term in searchable:
+                    results.append(
+                        f"• {self.bot.ip_handler.format_ip_with_geo(ip)}"
+                    )
+
+            if not results:
                 return await self.bot.bot_send(
                     message.channel,
-                    content=f"Usage: `{p}ip db <info|list|search|refresh> [args]`",
+                    content=f"❌ No IPs found matching '{search_term}'",
                 )
 
-            db_subcommand = args[1].lower()
+            output = [f"**Search Results for '{search_term}':**"] + results[:25]
+            if len(results) > 25:
+                output.append(f"\n*Showing 25 of {len(results)} results*")
 
-            if db_subcommand == "info":
-                if len(args) < 3:
-                    return await self.bot.bot_send(
-                        message.channel, content=f"Usage: `{p}ip db info <ip>`"
-                    )
+            await self.bot.bot_send(message.channel, content="\n".join(output))
 
-                ip = args[2]
-                if ip not in self.bot.ip_handler.ip_geo_data:
-                    return await self.bot.bot_send(
-                        message.channel,
-                        content=f"❌ No data for `{ip}` in database",
-                    )
+        elif db_subcommand == "refresh":
+            await self.bot.bot_send(
+                message.channel, "⚙️ Refreshing all IP geolocation data..."
+            )
 
-                geo = self.bot.ip_handler.ip_geo_data[ip]
-                flag = COUNTRY_FLAGS.get(geo.get("countryCode", ""), "🌐")
+            all_ips = list(self.bot.ip_handler.ip_geo_data.keys())
 
-                output = [
-                    f"**Cached IP Information for [{ip}](<https://whatismyipaddress.com/ip/{ip}>):**",
-                    f"{flag} **Country:** {geo.get('country', 'N/A')} ({geo.get('countryCode', 'N/A')})",
-                    f"**Region:** {geo.get('regionName', 'N/A')}",
-                    f"**City:** {geo.get('city', 'N/A')}",
-                    f"**ISP:** {geo.get('isp', 'N/A')}",
-                    f"**Organization:** {geo.get('org', 'N/A')}",
-                ]
-
-                # Check for VPN provider
-                vpn_provider = self.bot.ip_handler.detect_vpn_provider(
-                    geo.get("isp", ""), geo.get("org", "")
+            if not all_ips:
+                return await self.bot.bot_send(
+                    message.channel, content="❌ No IPs in database to refresh"
                 )
 
-                if vpn_provider:
-                    output.append(f"**VPN Provider:** {vpn_provider}")
-                elif geo.get("proxy"):
-                    output.append(f"**Proxy/VPN:** Yes")
+            geo_results = await self.bot.ip_handler.fetch_ip_info_batch(all_ips)
 
-                if geo.get("hosting"):
-                    output.append(f"**VPS/Hosting:** Yes")
+            from datetime import datetime
 
-                output.append(
-                    f"**Last Updated:** {geo.get('last_updated', 'N/A')[:10]}"
-                )
+            timestamp = datetime.now().isoformat()
+            for ip, geo_data in geo_results.items():
+                self.bot.ip_handler.ip_geo_data[ip] = {
+                    "country": geo_data.get("country"),
+                    "countryCode": geo_data.get("countryCode"),
+                    "region": geo_data.get("region"),
+                    "regionName": geo_data.get("regionName"),
+                    "city": geo_data.get("city"),
+                    "isp": geo_data.get("isp"),
+                    "org": geo_data.get("org"),
+                    "proxy": geo_data.get("proxy", False),
+                    "hosting": geo_data.get("hosting", False),
+                    "last_updated": timestamp,
+                }
 
-                await self.bot.bot_send(message.channel, content="\n".join(output))
+            self.bot.ip_handler.save_ip_geo_data()
 
-            elif db_subcommand == "list":
-                page = int(args[2]) if len(args) > 2 and args[2].isdigit() else 1
-                per_page = 20
-
-                ips = sorted(self.bot.ip_handler.ip_geo_data.keys())
-                start = (page - 1) * per_page
-                page_ips = ips[start : start + per_page]
-                total_pages = (len(ips) + per_page - 1) // per_page
-
-                if not page_ips:
-                    return await self.bot.bot_send(
-                        message.channel, content="❌ Page not found"
-                    )
-
-                output = [f"**Cached IPs (Page {page}/{total_pages}):**"]
-                for ip in page_ips:
-                    output.append(f"• {self.bot.ip_handler.format_ip_with_geo(ip)}")
-
-                if total_pages > page:
-                    output.append(f"\nUse `{p}ip db list {page + 1}` for next page.")
-
-                await self.bot.bot_send(message.channel, content="\n".join(output))
-
-            elif db_subcommand == "search":
-                if len(args) < 3:
-                    return await self.bot.bot_send(
-                        message.channel, content=f"Usage: `{p}ip db search <term>`"
-                    )
-
-                search_term = " ".join(args[2:]).lower()
-                results = []
-
-                for ip, geo in self.bot.ip_handler.ip_geo_data.items():
-                    searchable = " ".join(
-                        [
-                            geo.get("country", ""),
-                            geo.get("regionName", ""),
-                            geo.get("city", ""),
-                            geo.get("isp", ""),
-                            geo.get("org", ""),
-                        ]
-                    ).lower()
-
-                    if search_term in searchable:
-                        results.append(
-                            f"• {self.bot.ip_handler.format_ip_with_geo(ip)}"
-                        )
-
-                if not results:
-                    return await self.bot.bot_send(
-                        message.channel,
-                        content=f"❌ No IPs found matching '{search_term}'",
-                    )
-
-                output = [f"**Search Results for '{search_term}':**"] + results[:25]
-                if len(results) > 25:
-                    output.append(f"\n*Showing 25 of {len(results)} results*")
-
-                await self.bot.bot_send(message.channel, content="\n".join(output))
-
-            elif db_subcommand == "refresh":
-                await self.bot.bot_send(
-                    message.channel, "⚙️ Refreshing all IP geolocation data..."
-                )
-
-                all_ips = list(self.bot.ip_handler.ip_geo_data.keys())
-
-                if not all_ips:
-                    return await self.bot.bot_send(
-                        message.channel, content="❌ No IPs in database to refresh"
-                    )
-
-                geo_results = await self.bot.ip_handler.fetch_ip_info_batch(all_ips)
-
-                from datetime import datetime
-
-                timestamp = datetime.now().isoformat()
-                for ip, geo_data in geo_results.items():
-                    self.bot.ip_handler.ip_geo_data[ip] = {
-                        "country": geo_data.get("country"),
-                        "countryCode": geo_data.get("countryCode"),
-                        "region": geo_data.get("region"),
-                        "regionName": geo_data.get("regionName"),
-                        "city": geo_data.get("city"),
-                        "isp": geo_data.get("isp"),
-                        "org": geo_data.get("org"),
-                        "proxy": geo_data.get("proxy", False),
-                        "hosting": geo_data.get("hosting", False),
-                        "last_updated": timestamp,
-                    }
-
-                self.bot.ip_handler.save_ip_geo_data()
-
-                await self.bot.bot_send(
-                    message.channel,
-                    content=f"✅ Refreshed {len(geo_results)} IP records",
-                )
-
-            else:
-                await self.bot.bot_send(
-                    message.channel,
-                    content=f"❌ Unknown subcommand. Use `{p}help ip` for usage",
-                )
+            await self.bot.bot_send(
+                message.channel,
+                content=f"✅ Refreshed {len(geo_results)} IP records",
+            )
 
         else:
             await self.bot.bot_send(
@@ -468,6 +475,11 @@ class UserCommands:
                 content=f"❌ Unknown subcommand. Use `{p}help ip` for usage",
             )
 
+    else:
+        await self.bot.bot_send(
+            message.channel,
+            content=f"❌ Unknown subcommand. Use `{p}help ip` for usage",
+        )
     async def command_help(self, message: discord.Message, args: List[str]):
         """Shows help information."""
         p = self.bot.config.get_prefix(message.guild.id if message.guild else None)
