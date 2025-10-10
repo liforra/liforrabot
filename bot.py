@@ -5,7 +5,7 @@ import re
 import json
 import logging
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Optional, Union
 from datetime import datetime, timedelta
 
 from config.config_manager import ConfigManager
@@ -37,16 +37,21 @@ class Bot:
         # Initialize Discord client based on token type
         if token_type == "bot":
             import discord
+            from discord import app_commands
             self.discord = discord
+            self.app_commands = app_commands
             intents = discord.Intents.default()
             intents.message_content = True
             intents.members = True
             intents.presences = True
             self.client = discord.Client(intents=intents)
+            self.tree = app_commands.CommandTree(self.client)
         else:  # user/selfbot
             import selfcord as discord
             self.discord = discord
+            self.app_commands = None
             self.client = discord.Client()
+            self.tree = None
 
         # Initialize handlers
         self.config = ConfigManager(data_dir)
@@ -100,6 +105,231 @@ class Bot:
         self.client.event(self.on_message_edit)
         self.client.event(self.on_message_delete)
         self.client.event(self.on_presence_update)
+
+        # Register slash commands if bot token
+        if self.token_type == "bot":
+            self.register_slash_commands()
+
+    def register_slash_commands(self):
+        """Registers slash commands for bot tokens."""
+        if not self.tree:
+            return
+
+        # Trump command
+        @self.tree.command(name="trump", description="Get a random Trump quote")
+        @self.app_commands.allowed_installs(guilds=True, users=True)
+        @self.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+        async def trump_slash(interaction: self.discord.Interaction):
+            await interaction.response.defer()
+            
+            # Create a mock message object
+            class MockMessage:
+                def __init__(self, interaction):
+                    self.channel = interaction.channel
+                    self.guild = interaction.guild
+                    self.author = interaction.user
+            
+            mock_msg = MockMessage(interaction)
+            
+            # Call the text command
+            import httpx
+            try:
+                async with httpx.AsyncClient() as client:
+                    response = await client.get(
+                        "https://api.whatdoestrumpthink.com/api/v1/quotes/random",
+                        timeout=10,
+                    )
+                    response.raise_for_status()
+                    quote = response.json().get("message", "Could not retrieve a quote.")
+                    await interaction.followup.send(f'"{quote}" ~Donald Trump')
+            except Exception as e:
+                await interaction.followup.send(f"Sorry, an error occurred: {type(e).__name__}")
+
+        # Websites command
+        @self.tree.command(name="websites", description="Check status of configured websites")
+        @self.app_commands.allowed_installs(guilds=True, users=True)
+        @self.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+        async def websites_slash(interaction: self.discord.Interaction):
+            await interaction.response.defer()
+            
+            class MockMessage:
+                def __init__(self, interaction):
+                    self.channel = interaction.channel
+                    self.guild = interaction.guild
+                    self.author = interaction.user
+            
+            mock_msg = MockMessage(interaction)
+            
+            gid = interaction.guild.id if interaction.guild else None
+            sites = self.config.get_guild_config(
+                gid,
+                "websites",
+                self.config.default_websites,
+                interaction.user.id,
+                interaction.channel.id,
+            )
+            friend_sites = self.config.get_guild_config(
+                gid,
+                "friend_websites",
+                self.config.default_friend_websites,
+                interaction.user.id,
+                interaction.channel.id,
+            )
+            
+            main_res, friend_res = await asyncio.gather(
+                self.user_commands_handler._check_and_format_sites(sites, "Websites"),
+                self.user_commands_handler._check_and_format_sites(friend_sites, "Friends Websites"),
+            )
+            
+            final_output = []
+            if main_res:
+                final_output.extend(main_res)
+            if friend_res:
+                if final_output:
+                    final_output.append("")
+                final_output.extend(friend_res)
+            
+            content = "\n".join(final_output) if final_output else "No websites are configured."
+            await interaction.followup.send(content)
+
+        # IP Info command
+        @self.tree.command(name="ip", description="Get information about an IP address")
+        @self.app_commands.describe(ip="The IP address to look up (IPv4 or IPv6)")
+        @self.app_commands.allowed_installs(guilds=True, users=True)
+        @self.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+        async def ip_slash(interaction: self.discord.Interaction, ip: str):
+            await interaction.response.defer()
+            
+            from utils.helpers import is_valid_ip, is_valid_ipv6
+            from utils.constants import COUNTRY_FLAGS
+            
+            if not is_valid_ip(ip):
+                await interaction.followup.send("❌ Invalid IP address format")
+                return
+            
+            ip_data = await self.ip_handler.fetch_ip_info(ip)
+            
+            if not ip_data:
+                await interaction.followup.send(f"❌ Failed to fetch info for `{ip}`")
+                return
+            
+            flag = COUNTRY_FLAGS.get(ip_data.get("countryCode", ""), "🌐")
+            
+            if is_valid_ipv6(ip):
+                ip_header = f"**IP Information for `{ip}`:**"
+            else:
+                ip_header = f"**IP Information for [{ip}](<https://whatismyipaddress.com/ip/{ip}>):**"
+            
+            output = [
+                ip_header,
+                f"{flag} **Country:** {ip_data.get('country', 'N/A')} ({ip_data.get('countryCode', 'N/A')})",
+                f"**Region:** {ip_data.get('regionName', 'N/A')}",
+                f"**City:** {ip_data.get('city', 'N/A')}",
+                f"**ZIP:** {ip_data.get('zip', 'N/A')}",
+                f"**Coordinates:** {ip_data.get('lat', 'N/A')}, {ip_data.get('lon', 'N/A')}",
+                f"**Timezone:** {ip_data.get('timezone', 'N/A')}",
+                f"**ISP:** {ip_data.get('isp', 'N/A')}",
+                f"**Organization:** {ip_data.get('org', 'N/A')}",
+                f"**AS:** {ip_data.get('as', 'N/A')}",
+            ]
+            
+            vpn_provider = self.ip_handler.detect_vpn_provider(
+                ip_data.get("isp", ""), ip_data.get("org", "")
+            )
+            
+            if vpn_provider:
+                output.append(f"**VPN Provider:** {vpn_provider}")
+            elif ip_data.get("proxy"):
+                output.append(f"**Proxy/VPN:** Yes")
+            
+            if ip_data.get("hosting"):
+                output.append(f"**VPS/Hosting:** Yes")
+            
+            await interaction.followup.send("\n".join(output))
+
+        # Alts command
+        @self.tree.command(name="alts", description="Look up a user's known alts and IPs")
+        @self.app_commands.describe(username="The username to look up")
+        @self.app_commands.allowed_installs(guilds=True, users=True)
+        @self.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+        async def alts_slash(interaction: self.discord.Interaction, username: str):
+            await interaction.response.defer()
+            
+            if not str(interaction.user.id) in self.config.admin_ids:
+                await interaction.followup.send("❌ This command is admin-only.")
+                return
+            
+            from utils.helpers import format_alt_name, format_alts_grid, is_valid_ipv4, is_valid_ipv6
+            
+            search_term = username
+            found_user = None
+            
+            lowercase_map = {
+                k.lower(): k for k in self.alts_handler.alts_data.keys()
+            }
+            
+            if search_term.startswith("."):
+                if search_term.lower() in lowercase_map:
+                    found_user = lowercase_map[search_term.lower()]
+            else:
+                search_candidates = [
+                    search_term,
+                    f".{search_term}",
+                    f"...{search_term}",
+                ]
+                for candidate in search_candidates:
+                    if candidate.lower() in lowercase_map:
+                        found_user = lowercase_map[candidate.lower()]
+                        break
+            
+            if not found_user:
+                await interaction.followup.send(f"❌ No data for `{search_term}`")
+                return
+            
+            data = self.alts_handler.alts_data[found_user]
+            alts = sorted(list(data.get("alts", set())))
+            ips = sorted(list(data.get("ips", set())))
+            
+            formatted_found_user = format_alt_name(found_user)
+            output = [f"**Alts data for {formatted_found_user}:**"]
+            
+            if alts:
+                formatted_alts = [format_alt_name(alt) for alt in alts]
+                grid_lines = format_alts_grid(formatted_alts, max_per_line=3)
+                output.append(f"**Alts ({len(alts)}):**")
+                output.extend(grid_lines)
+            
+            if ips:
+                output.append(f"\n**IPs ({len(ips)}):**")
+                for ip in ips:
+                    output.append(f"→ {self.ip_handler.format_ip_with_geo(ip)}")
+            
+            output.append(
+                f"\n*First seen: {data.get('first_seen', 'N/A')[:10]} | Last updated: {data.get('last_updated', 'N/A')[:10]}*"
+            )
+            
+            await interaction.followup.send("\n".join(output))
+
+        # Help command
+        @self.tree.command(name="help", description="Show available commands")
+        @self.app_commands.allowed_installs(guilds=True, users=True)
+        @self.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+        async def help_slash(interaction: self.discord.Interaction):
+            p = self.config.get_prefix(interaction.guild.id if interaction.guild else None)
+            
+            help_text = (
+                f"**Text Commands:** Use prefix `{p}` followed by:\n"
+                f"`trump`, `websites`, `pings`, `note`, `ip`, `help`\n\n"
+                f"**Slash Commands:** Available via `/`:\n"
+                f"`/trump`, `/websites`, `/ip`, `/alts`, `/help`\n\n"
+                f"*Type `{p}help <command>` for detailed text command info.*"
+            )
+            
+            if str(interaction.user.id) in self.config.admin_ids:
+                admin_cmds = ", ".join(f"`{cmd}`" for cmd in self.admin_commands.keys())
+                help_text += f"\n\n**Admin Commands:** {admin_cmds}"
+            
+            await interaction.response.send_message(help_text)
 
     async def run(self):
         """Starts the bot."""
@@ -312,6 +542,15 @@ class Bot:
         """Called when the bot is ready."""
         print(f"Logged in as {self.client.user} (ID: {self.client.user.id}) [Type: {self.token_type}]")
 
+        # Sync slash commands for bots
+        if self.token_type == "bot" and self.tree:
+            try:
+                print(f"[{self.client.user}] Syncing slash commands...")
+                synced = await self.tree.sync()
+                print(f"[{self.client.user}] Synced {len(synced)} slash command(s)")
+            except Exception as e:
+                print(f"[{self.client.user}] Failed to sync slash commands: {e}")
+
         # Set status
         status_map = {
             "online": self.discord.Status.online,
@@ -493,8 +732,8 @@ class Bot:
             error_name = type(e).__name__
             if "Forbidden" in error_name and hasattr(e, 'code') and e.code != 50013:
                 print(f"[{self.client.user}] Permission error on_message_edit: {e}")
-        except Exception as e:
-            print(f"[{self.client.user}] Error in on_message_edit: {e}")
+            else:
+                print(f"[{self.client.user}] Error in on_message_edit: {e}")
 
     async def on_message_delete(self, message):
         """Called when a message is deleted."""
@@ -539,8 +778,8 @@ class Bot:
             error_name = type(e).__name__
             if "Forbidden" in error_name and hasattr(e, 'code') and e.code != 50013:
                 print(f"[{self.client.user}] Permission error on_message_delete: {e}")
-        except Exception as e:
-            print(f"[{self.client.user}] Critical error in on_message_delete: {e}")
+            else:
+                print(f"[{self.client.user}] Error in on_message_delete: {e}")
         finally:
             if message.id in self.message_cache:
                 del self.message_cache[message.id]

@@ -124,17 +124,23 @@ async def main():
         print("Operating in SINGLE mode.")
         token = main_config.get("token", "")
         token_file = main_config.get("token-file", "")
+        token_type_override = main_config.get("token-type", "").lower()
 
         if not token and token_file and Path(token_file).exists():
             token = Path(token_file).read_text().strip()
 
         if token:
-            print("Detecting token type...")
-            token_type = await detect_token_type(token)
+            if token_type_override in ["bot", "user"]:
+                print(f"Using config-specified token type: {token_type_override}")
+                token_type = token_type_override
+            else:
+                print("Detecting token type...")
+                token_type = await detect_token_type(token)
+                
             if token_type == "unknown":
                 print("FATAL: Could not determine token type or token is invalid.")
             else:
-                print(f"Detected token type: {token_type}")
+                print(f"Token type: {token_type}")
                 bots_to_run.append(Bot(token=token, data_dir=Path("."), token_type=token_type))
         else:
             print("FATAL: No token found for single mode operation.")
@@ -144,6 +150,7 @@ async def main():
         token_dir = Path(main_config.get("token_directory", "./tokens"))
         data_dir = Path(main_config.get("data_directory", "./bot_data"))
         user_map_path = data_dir / "user_map.json"
+        token_types_file = data_dir / "token_types.json"
 
         if not token_dir.is_dir():
             print(f"FATAL: Token directory '{token_dir}' not found. Creating.")
@@ -157,6 +164,14 @@ async def main():
         except json.JSONDecodeError:
             user_map = {}
 
+        # Load token type overrides
+        try:
+            token_types = (
+                json.loads(token_types_file.read_text()) if token_types_file.exists() else {}
+            )
+        except json.JSONDecodeError:
+            token_types = {}
+
         map_updated = False
 
         for token_file in sorted(token_dir.iterdir()):
@@ -168,15 +183,24 @@ async def main():
                 continue
 
             print(f"\nProcessing token from {token_file.name}...")
-            token_type = await detect_token_type(token)
+            
+            token_hash = hashlib.sha1(token.encode()).hexdigest()[:12]
+            
+            # Check for manual token type override
+            if token_hash in token_types and token_types[token_hash] in ["bot", "user"]:
+                token_type = token_types[token_hash]
+                print(f"Using saved token type override: {token_type}")
+            else:
+                token_type = await detect_token_type(token)
             
             if token_type == "unknown":
                 print(f"!!! Could not determine token type for {token_file.name}, skipping. !!!")
+                print(f"Tip: Add to {token_types_file}:")
+                print(f'  "{token_hash}": "bot"  or  "{token_hash}": "user"')
                 continue
             
             print(f"Token type: {token_type}")
 
-            token_hash = hashlib.sha1(token.encode()).hexdigest()[:12]
             hashed_dir = data_dir / token_hash
 
             if hashed_dir.is_dir():
