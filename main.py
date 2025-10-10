@@ -24,7 +24,11 @@ async def detect_token_type(token: str) -> str:
         # Likely a bot token, verify by attempting login
         try:
             import discord
-            temp_client = discord.Client()
+            intents = discord.Intents.default()
+            intents.message_content = True
+            intents.members = True
+            intents.presences = True
+            temp_client = discord.Client(intents=intents)
             try:
                 await asyncio.wait_for(temp_client.login(token), timeout=10)
                 is_bot = temp_client.user.bot if hasattr(temp_client.user, 'bot') else True
@@ -71,7 +75,11 @@ async def get_username_from_token(token: str, token_type: str = None) -> Optiona
     if token_type == "bot":
         try:
             import discord
-            temp_client = discord.Client()
+            intents = discord.Intents.default()
+            intents.message_content = True
+            intents.members = True
+            intents.presences = True
+            temp_client = discord.Client(intents=intents)
         except ImportError:
             print("discord.py not installed")
             return None

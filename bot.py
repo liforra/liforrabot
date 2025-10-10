@@ -38,7 +38,11 @@ class Bot:
         if token_type == "bot":
             import discord
             self.discord = discord
-            self.client = discord.Client()
+            intents = discord.Intents.default()
+            intents.message_content = True
+            intents.members = True
+            intents.presences = True
+            self.client = discord.Client(intents=intents)
         else:  # user/selfbot
             import selfcord as discord
             self.discord = discord
