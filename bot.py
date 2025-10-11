@@ -82,6 +82,7 @@ class Bot:
             "help": self.user_commands_handler.command_help,
             "ip": self.user_commands_handler.command_ip,
             "playerinfo": self.user_commands_handler.command_playerinfo,
+            "alts": self.user_commands_handler.command_alts,
         }
         self.admin_commands = {
             "reload-config": self.admin_commands_handler.command_reload_config,
@@ -135,21 +136,6 @@ class Bot:
         import httpx
         from utils.helpers import format_alt_name, format_alts_grid, is_valid_ip, is_valid_ipv6
         from utils.constants import COUNTRY_FLAGS
-
-        # ==================== HELPER: Create command pairs ====================
-        def create_command_pair(name, description, callback, **kwargs):
-            """Creates both normal and private (p-prefixed) versions of a command."""
-            # Normal version (not ephemeral)
-            cmd = self.tree.command(name=name, description=description, **kwargs)(callback)
-            
-            # Private version (ephemeral)
-            async def ephemeral_wrapper(*args, **call_kwargs):
-                # Inject ephemeral=True into the original callback
-                return await callback(*args, _ephemeral=True, **call_kwargs)
-            
-            pcmd = self.tree.command(name=f"p{name}", description=f"[Private] {description}", **kwargs)(ephemeral_wrapper)
-            
-            return cmd, pcmd
 
         # ==================== USER COMMANDS ====================
         
@@ -615,7 +601,7 @@ class Bot:
                     links = [
                         f"[NameMC](https://namemc.com/profile/{player['username']})",
                         f"[Avatar]({player['avatar']})",
-                        f"[Skin]({player['skin_texture']})"
+                        f"[Skin](https://crafatar.com/skins/{player['raw_id']})"
                     ]
                     embed.add_field(
                         name="🔗 Links",
@@ -636,8 +622,8 @@ class Bot:
                             inline=False
                         )
                     
-                    # Skin preview (full body)
-                    skin_render = f"https://crafthead.net/armor/body/{player['raw_id']}"
+                    # Skin preview (full body with overlay) - FIXED URL
+                    skin_render = f"https://mc-heads.net/body/{player['raw_id']}/right"
                     embed.set_image(url=skin_render)
                     
                     # Footer with cache info
@@ -646,7 +632,7 @@ class Bot:
                         cached_time = datetime.fromtimestamp(cached_at).strftime('%Y-%m-%d %H:%M:%S UTC')
                         embed.set_footer(
                             text=f"Data cached at {cached_time}",
-                            icon_url="https://crafthead.net/cube/MHF_Question/8"
+                            icon_url="https://mc-heads.net/head/MHF_Question/8"
                         )
                     else:
                         embed.set_footer(text="Powered by PlayerDB")
@@ -665,17 +651,18 @@ class Bot:
         async def pplayerinfo_slash(interaction: self.discord.Interaction, username: str):
             await playerinfo_slash(interaction, username, _ephemeral=True)
 
-        # Alts command
+        # Alts command - OPTIMIZED VERSION
         @self.tree.command(name="alts", description="[ADMIN] Look up a user's known alts and IPs")
         @self.app_commands.describe(username="The username to look up")
         @self.app_commands.allowed_installs(guilds=True, users=True)
         @self.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
         async def alts_slash(interaction: self.discord.Interaction, username: str, _ephemeral: bool = False):
-            if not str(interaction.user.id) in self.config.admin_ids:
-                await interaction.response.send_message("❌ This command is admin-only.", ephemeral=True)
-                return
-            
+            # IMMEDIATE DEFER - this is critical!
             await interaction.response.defer(ephemeral=_ephemeral)
+            
+            if not str(interaction.user.id) in self.config.admin_ids:
+                await interaction.followup.send("❌ This command is admin-only.", ephemeral=True)
+                return
             
             search_term = username
             found_user = None
@@ -696,34 +683,32 @@ class Bot:
             ips = sorted(list(data.get("ips", set())))
             
             output = [f"**Alts data for {format_alt_name(found_user)}:**"]
+            
+            # Limit display to prevent timeout
+            max_alts_display = 30
+            max_ips_display = 15
+            
             if alts:
                 output.append(f"**Alts ({len(alts)}):**")
-                formatted_alts = [format_alt_name(alt) for alt in alts]
-                
-                # Limit alts display to prevent response timeout
-                max_alts_display = 50
-                if len(formatted_alts) > max_alts_display:
-                    output.extend(format_alts_grid(formatted_alts[:max_alts_display], 3))
-                    output.append(f"*... and {len(formatted_alts) - max_alts_display} more alts*")
-                else:
-                    output.extend(format_alts_grid(formatted_alts, 3))
+                formatted_alts = [format_alt_name(alt) for alt in alts[:max_alts_display]]
+                output.extend(format_alts_grid(formatted_alts, 3))
+                if len(alts) > max_alts_display:
+                    output.append(f"*... and {len(alts) - max_alts_display} more alts (use text command for full list)*")
             
             if ips:
                 output.append(f"\n**IPs ({len(ips)}):**")
-                # Limit IP display
-                max_ips_display = 20
+                for ip in ips[:max_ips_display]:
+                    output.append(f"→ {self.ip_handler.format_ip_with_geo(ip)}")
                 if len(ips) > max_ips_display:
-                    output.extend([f"→ {self.ip_handler.format_ip_with_geo(ip)}" for ip in ips[:max_ips_display]])
-                    output.append(f"*... and {len(ips) - max_ips_display} more IPs*")
-                else:
-                    output.extend([f"→ {self.ip_handler.format_ip_with_geo(ip)}" for ip in ips])
+                    output.append(f"*... and {len(ips) - max_ips_display} more IPs (use text command for full list)*")
             
             output.append(f"\n*First seen: {data.get('first_seen', 'N/A')[:10]} | Last updated: {data.get('last_updated', 'N/A')[:10]}*")
             
             full_output = "\n".join(output)
+            
             # Discord has a 2000 char limit
             if len(full_output) > 1900:
-                await interaction.followup.send(full_output[:1900] + "\n*... (truncated)*", ephemeral=_ephemeral)
+                await interaction.followup.send(full_output[:1900] + "\n*... (truncated, use text command for full output)*", ephemeral=_ephemeral)
             else:
                 await interaction.followup.send(full_output, ephemeral=_ephemeral)
 
