@@ -966,12 +966,15 @@ class Bot:
         async def pplayerinfo_slash(interaction: self.discord.Interaction, username: str):
             await playerinfo_slash(interaction, username, _ephemeral=True)
 
-        # Alts command with pagination
+        # Alts command with pagination and IP visibility control
         @self.tree.command(name="alts", description="[ADMIN] Look up a user's known alts and IPs")
-        @self.app_commands.describe(username="The username to look up")
+        @self.app_commands.describe(
+            username="The username to look up",
+            _ip="Show full IP addresses (default: False, shows country only)"
+        )
         @self.app_commands.allowed_installs(guilds=True, users=True)
         @self.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
-        async def alts_slash(interaction: self.discord.Interaction, username: str, _ephemeral: bool = False):
+        async def alts_slash(interaction: self.discord.Interaction, username: str, _ip: bool = False, _ephemeral: bool = False):
             await interaction.response.defer(ephemeral=_ephemeral)
             
             if not str(interaction.user.id) in self.config.admin_ids:
@@ -1003,7 +1006,7 @@ class Bot:
             
             # Calculate how many pages we need
             alt_pages = (len(alts) + per_page_alts - 1) // per_page_alts if alts else 0
-            ip_pages = (len(ips) + per_page_ips - 1) // per_page_ips if ips else 0
+            ip_pages = (len(ips) + per_page_ips - 1) // per_page_ips if (ips and _ip) else 0
             total_pages = max(alt_pages, ip_pages, 1)
             
             for page_num in range(total_pages):
@@ -1037,22 +1040,76 @@ class Bot:
                             inline=True
                         )
                 
-                # Add IPs for this page
-                if ips and page_num < ip_pages:
-                    start_ip = page_num * per_page_ips
-                    page_ips = ips[start_ip : start_ip + per_page_ips]
-                    
-                    ip_list = []
-                    for ip in page_ips:
-                        ip_list.append(self.ip_handler.format_ip_with_geo(ip))
-                    
-                    embed.add_field(
-                        name=f"🌐 Known IP Addresses ({len(ips)} total)",
-                        value="\n".join(ip_list),
-                        inline=False
-                    )
+                # Add IP information
+                if ips:
+                    if _ip and page_num < ip_pages:
+                        # Show full IP information with pagination
+                        start_ip = page_num * per_page_ips
+                        page_ips = ips[start_ip : start_ip + per_page_ips]
+                        
+                        ip_list = []
+                        for ip in page_ips:
+                            ip_list.append(self.ip_handler.format_ip_with_geo(ip))
+                        
+                        embed.add_field(
+                            name=f"🌐 Known IP Addresses ({len(ips)} total)",
+                            value="\n".join(ip_list),
+                            inline=False
+                        )
+                    elif not _ip and page_num == 0:
+                        # Show only most common country and VPN status (first page only)
+                        country_counts = {}
+                        has_vpn = False
+                        
+                        for ip in ips:
+                            geo = self.ip_handler.ip_geo_data.get(ip)
+                            if geo:
+                                # Check if proxy/VPN or hosting
+                                vpn_provider = self.ip_handler.detect_vpn_provider(
+                                    geo.get("isp", ""), geo.get("org", "")
+                                )
+                                if vpn_provider or geo.get("proxy") or geo.get("hosting"):
+                                    has_vpn = True
+                                    continue
+                                
+                                country = geo.get("country")
+                                if country:
+                                    country_code = geo.get("countryCode", "")
+                                    flag = COUNTRY_FLAGS.get(country_code, "🌐")
+                                    country_key = (flag, country, country_code)
+                                    country_counts[country_key] = country_counts.get(country_key, 0) + 1
+                        
+                        # Find most common country
+                        most_common_country = None
+                        if country_counts:
+                            most_common_country = max(country_counts.items(), key=lambda x: x[1])
+                        
+                        # Build the display
+                        location_info = []
+                        if most_common_country:
+                            flag, country, country_code = most_common_country[0]
+                            location_info.append(f"{flag} **{country}**")
+                        
+                        if has_vpn:
+                            location_info.append("🔒 **Used VPN/Proxy**")
+                        
+                        if location_info:
+                            embed.add_field(
+                                name=f"🌍 Location ({len(ips)} total IPs)",
+                                value="\n".join(location_info),
+                                inline=False
+                            )
+                        else:
+                            embed.add_field(
+                                name=f"🌍 Location ({len(ips)} total IPs)",
+                                value="🌐 **Unknown**",
+                                inline=False
+                            )
                 
-                embed.set_footer(text=f"Page {page_num + 1}/{total_pages}")
+                footer_text = f"Page {page_num + 1}/{total_pages}"
+                if not _ip and ips:
+                    footer_text += " • Use _ip: True to see full IP addresses"
+                embed.set_footer(text=footer_text)
                 embeds.append(embed)
             
             if len(embeds) == 1:
@@ -1062,11 +1119,14 @@ class Bot:
                 await interaction.followup.send(embed=embeds[0], view=pagination.view, ephemeral=_ephemeral)
 
         @self.tree.command(name="palts", description="[Private] [ADMIN] Look up a user's known alts and IPs")
-        @self.app_commands.describe(username="The username to look up")
+        @self.app_commands.describe(
+            username="The username to look up",
+            _ip="Show full IP addresses (default: False, shows country only)"
+        )
         @self.app_commands.allowed_installs(guilds=True, users=True)
         @self.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
-        async def palts_slash(interaction: self.discord.Interaction, username: str):
-            await alts_slash(interaction, username, _ephemeral=True)
+        async def palts_slash(interaction: self.discord.Interaction, username: str, _ip: bool = False):
+            await alts_slash(interaction, username, _ip, _ephemeral=True)
 
         # Help command
         @self.tree.command(name="help", description="Show available commands")
@@ -1115,7 +1175,7 @@ class Bot:
                 embed.add_field(
                     name="⚙️ Admin Commands",
                     value=(
-                        "`/alts <username>` - Look up player alts and IPs\n"
+                        "`/alts <username> [_ip]` - Look up player alts and IPs\n"
                         "`/ipdbrefresh` - Refresh all IP data\n"
                         "`/reloadconfig` - Reload all config files\n"
                         "`/configget <path>` - Get a config value\n"
