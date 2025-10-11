@@ -518,6 +518,75 @@ class UserCommands:
                 content=f"❌ Unknown subcommand. Use `{p}help ip` for usage",
             )
 
+    async def command_playerinfo(self, message: discord.Message, args: List[str]):
+        """Gets detailed Minecraft player information."""
+        if not args:
+            p = self.bot.config.get_prefix(message.guild.id if message.guild else None)
+            return await self.bot.bot_send(
+                message.channel,
+                content=f"Usage: `{p}playerinfo <username>`"
+            )
+        
+        username = args[0]
+        
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    f"https://playerdb.co/api/player/minecraft/{username}",
+                    headers={"User-Agent": "https://liforra.de"},
+                    timeout=10
+                )
+                response.raise_for_status()
+                data = response.json()
+                
+                if data.get("code") != "player.found":
+                    return await self.bot.bot_send(
+                        message.channel,
+                        content=f"❌ Player `{username}` not found"
+                    )
+                
+                player = data["data"]["player"]
+                
+                # For selfbots, send as formatted text (no embeds)
+                output = [
+                    f"🎮 **Player Info: {player['username']}**",
+                    f"",
+                    f"**🆔 UUID:** `{player['id']}`",
+                    f"**🔢 Raw UUID:** `{player['raw_id']}`",
+                    f"",
+                    f"**🔗 Links:**",
+                    f"• NameMC: https://namemc.com/profile/{player['username']}",
+                    f"• Avatar: {player['avatar']}",
+                    f"• Skin: {player['skin_texture']}",
+                    f"• Full Body: https://crafthead.net/armor/body/{player['raw_id']}",
+                ]
+                
+                if player.get('name_history') and len(player['name_history']) > 0:
+                    history_list = player['name_history'][:10]
+                    history = " → ".join([f"`{name}`" for name in history_list])
+                    if len(player['name_history']) > 10:
+                        history += f" (+{len(player['name_history']) - 10} more)"
+                    output.append(f"\n**📜 Name History:**\n{history}")
+                
+                cached_at = player['meta'].get('cached_at')
+                if cached_at:
+                    from datetime import datetime
+                    cached_time = datetime.fromtimestamp(cached_at).strftime('%Y-%m-%d %H:%M:%S UTC')
+                    output.append(f"\n*Data cached at {cached_time}*")
+                
+                await self.bot.bot_send(message.channel, content="\n".join(output))
+                
+        except httpx.HTTPStatusError as e:
+            await self.bot.bot_send(
+                message.channel,
+                content=f"❌ API Error: {e.response.status_code}"
+            )
+        except Exception as e:
+            await self.bot.bot_send(
+                message.channel,
+                content=f"❌ Error: {type(e).__name__}"
+            )
+
     async def command_help(self, message: discord.Message, args: List[str]):
         """Shows help information."""
         p = self.bot.config.get_prefix(message.guild.id if message.guild else None)
@@ -531,7 +600,7 @@ class UserCommands:
                 admin_cmds = ", ".join(
                     f"`{cmd}`" for cmd in self.bot.admin_commands.keys()
                 )
-                help_text += f"\n**Admin:** {admin_cmds}"
+                help_text += f"\n\n**Admin Commands:** {admin_cmds}"
             await self.bot.bot_send(message.channel, content=help_text)
         else:
             cmd_name = args[0].lower()
