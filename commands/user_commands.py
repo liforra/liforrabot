@@ -557,8 +557,8 @@ class UserCommands:
                     f"**🔗 Links:**",
                     f"• NameMC: https://namemc.com/profile/{player['username']}",
                     f"• Avatar: {player['avatar']}",
-                    f"• Skin: {player['skin_texture']}",
-                    f"• Full Body: https://crafthead.net/armor/body/{player['raw_id']}",
+                    f"• Skin (download): https://crafatar.com/skins/{player['raw_id']}",
+                    f"• Full Body (with overlay): https://mc-heads.net/body/{player['raw_id']}/right",
                 ]
                 
                 if player.get('name_history') and len(player['name_history']) > 0:
@@ -586,6 +586,110 @@ class UserCommands:
                 message.channel,
                 content=f"❌ Error: {type(e).__name__}"
             )
+
+    async def command_alts(self, message: discord.Message, args: List[str]):
+        """Alts database lookup (user-facing, read-only)."""
+        p = self.bot.config.get_prefix(message.guild.id if message.guild else None)
+        
+        if not args:
+            return await self.bot.bot_send(
+                message.channel,
+                content=f"Usage: `{p}alts <username>` or `{p}alts list [page]` or `{p}alts stats`"
+            )
+
+        subcommand = args[0].lower()
+
+        if subcommand == "stats":
+            total_users = len(self.bot.alts_handler.alts_data)
+            all_ips = set().union(
+                *(
+                    data.get("ips", set())
+                    for data in self.bot.alts_handler.alts_data.values()
+                )
+            )
+            stats = f"**Alts DB Stats:**\n- Users: {total_users}\n- Unique IPs: {len(all_ips)}\n- Cached IP Geo Data: {len(self.bot.ip_handler.ip_geo_data)}"
+            return await self.bot.bot_send(message.channel, content=stats)
+
+        elif subcommand == "list":
+            from utils.helpers import is_valid_ipv4, is_valid_ipv6
+            
+            users = sorted(
+                [
+                    user
+                    for user in self.bot.alts_handler.alts_data.keys()
+                    if not (is_valid_ipv4(user) or is_valid_ipv6(user))
+                ]
+            )
+            page = int(args[1]) if len(args) > 1 and args[1].isdigit() else 1
+            per_page = 20
+            start = (page - 1) * per_page
+            page_users = users[start : start + per_page]
+            total_pages = (len(users) + per_page - 1) // per_page
+
+            if not page_users:
+                return await self.bot.bot_send(message.channel, "❌ Page not found")
+
+            output = [f"**Tracked Users (Page {page}/{total_pages}):**"]
+            for user in page_users:
+                data = self.bot.alts_handler.alts_data[user]
+                formatted_user_name = format_alt_name(user)
+                output.append(
+                    f"• {formatted_user_name} - {len(data.get('alts', []))} alts, {len(data.get('ips', []))} IPs"
+                )
+            if total_pages > page:
+                output.append(f"\nUse `{p}alts list {page + 1}` for next page.")
+            await self.bot.bot_send(message.channel, content="\n".join(output))
+
+        else:
+            # Username lookup
+            search_term = args[0]
+            found_user = None
+
+            lowercase_map = {
+                k.lower(): k for k in self.bot.alts_handler.alts_data.keys()
+            }
+
+            if search_term.startswith("."):
+                if search_term.lower() in lowercase_map:
+                    found_user = lowercase_map[search_term.lower()]
+            else:
+                search_candidates = [
+                    search_term,
+                    f".{search_term}",
+                    f"...{search_term}",
+                ]
+                for candidate in search_candidates:
+                    if candidate.lower() in lowercase_map:
+                        found_user = lowercase_map[candidate.lower()]
+                        break
+
+            if not found_user:
+                return await self.bot.bot_send(
+                    message.channel, f"❌ No data for `{search_term}`"
+                )
+
+            data = self.bot.alts_handler.alts_data[found_user]
+            alts = sorted(list(data.get("alts", set())))
+            ips = sorted(list(data.get("ips", set())))
+
+            formatted_found_user = format_alt_name(found_user)
+            output = [f"**Alts data for {formatted_found_user}:**"]
+
+            if alts:
+                formatted_alts = [format_alt_name(alt) for alt in alts]
+                grid_lines = format_alts_grid(formatted_alts, max_per_line=3)
+                output.append(f"**Alts ({len(alts)}):**")
+                output.extend(grid_lines)
+
+            if ips:
+                output.append(f"\n**IPs ({len(ips)}):**")
+                for ip in ips:
+                    output.append(f"→ {self.bot.ip_handler.format_ip_with_geo(ip)}")
+
+            output.append(
+                f"\n*First seen: {data.get('first_seen', 'N/A')[:10]} | Last updated: {data.get('last_updated', 'N/A')[:10]}*"
+            )
+            await self.bot.bot_send(message.channel, content="\n".join(output))
 
     async def command_help(self, message: discord.Message, args: List[str]):
         """Shows help information."""
