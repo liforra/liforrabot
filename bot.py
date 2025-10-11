@@ -23,6 +23,84 @@ from utils.helpers import (
 )
 
 
+class PaginationView:
+    """Pagination view with buttons for navigating pages."""
+    
+    def __init__(self, embeds: List, discord_module, timeout: int = 180):
+        self.discord = discord_module
+        self.embeds = embeds
+        self.current_page = 0
+        self.message = None
+        self.timeout = timeout
+        self.view = None
+        self._create_view()
+    
+    def _create_view(self):
+        """Creates the discord.ui.View with buttons."""
+        self.view = self.discord.ui.View(timeout=self.timeout)
+        
+        # First page button
+        first_btn = self.discord.ui.Button(label="⏮️", style=self.discord.ButtonStyle.gray)
+        first_btn.callback = self._first_page_callback
+        self.view.add_item(first_btn)
+        self.first_button = first_btn
+        
+        # Previous page button
+        prev_btn = self.discord.ui.Button(label="◀️", style=self.discord.ButtonStyle.primary)
+        prev_btn.callback = self._prev_page_callback
+        self.view.add_item(prev_btn)
+        self.prev_button = prev_btn
+        
+        # Next page button
+        next_btn = self.discord.ui.Button(label="▶️", style=self.discord.ButtonStyle.primary)
+        next_btn.callback = self._next_page_callback
+        self.view.add_item(next_btn)
+        self.next_button = next_btn
+        
+        # Last page button
+        last_btn = self.discord.ui.Button(label="⏭️", style=self.discord.ButtonStyle.gray)
+        last_btn.callback = self._last_page_callback
+        self.view.add_item(last_btn)
+        self.last_button = last_btn
+        
+        # Delete button
+        delete_btn = self.discord.ui.Button(label="🗑️", style=self.discord.ButtonStyle.danger)
+        delete_btn.callback = self._delete_callback
+        self.view.add_item(delete_btn)
+        
+        self._update_buttons()
+    
+    def _update_buttons(self):
+        """Updates button states based on current page."""
+        self.first_button.disabled = self.current_page == 0
+        self.prev_button.disabled = self.current_page == 0
+        self.next_button.disabled = self.current_page == len(self.embeds) - 1
+        self.last_button.disabled = self.current_page == len(self.embeds) - 1
+    
+    async def _first_page_callback(self, interaction):
+        self.current_page = 0
+        self._update_buttons()
+        await interaction.response.edit_message(embed=self.embeds[0], view=self.view)
+    
+    async def _prev_page_callback(self, interaction):
+        self.current_page -= 1
+        self._update_buttons()
+        await interaction.response.edit_message(embed=self.embeds[self.current_page], view=self.view)
+    
+    async def _next_page_callback(self, interaction):
+        self.current_page += 1
+        self._update_buttons()
+        await interaction.response.edit_message(embed=self.embeds[self.current_page], view=self.view)
+    
+    async def _last_page_callback(self, interaction):
+        self.current_page = len(self.embeds) - 1
+        self._update_buttons()
+        await interaction.response.edit_message(embed=self.embeds[self.current_page], view=self.view)
+    
+    async def _delete_callback(self, interaction):
+        await interaction.message.delete()
+
+
 class Bot:
     def __init__(self, token: str, data_dir: Path, token_type: str = "bot"):
         self.token = token
@@ -137,69 +215,9 @@ class Bot:
         from utils.helpers import format_alt_name, format_alts_grid, is_valid_ip, is_valid_ipv6
         from utils.constants import COUNTRY_FLAGS
 
-        # ==================== PAGINATION VIEW ====================
-        class PaginationView(self.discord.ui.View):
-            def __init__(self, embeds: List[self.discord.Embed], user_id: int, timeout: int = 180):
-                super().__init__(timeout=timeout)
-                self.embeds = embeds
-                self.user_id = user_id
-                self.current_page = 0
-                self.message = None
-                self.update_buttons()
-
-            def update_buttons(self):
-                self.first_page.disabled = self.current_page == 0
-                self.prev_page.disabled = self.current_page == 0
-                self.next_page.disabled = self.current_page >= len(self.embeds) - 1
-                self.last_page.disabled = self.current_page >= len(self.embeds) - 1
-
-            async def interaction_check(self, interaction: self.discord.Interaction) -> bool:
-                if interaction.user.id != self.user_id:
-                    await interaction.response.send_message("❌ This is not your pagination menu!", ephemeral=True)
-                    return False
-                return True
-
-            @self.discord.ui.button(label="⏮️", style=self.discord.ButtonStyle.gray)
-            async def first_page(self, interaction: self.discord.Interaction, button: self.discord.ui.Button):
-                self.current_page = 0
-                self.update_buttons()
-                await interaction.response.edit_message(embed=self.embeds[self.current_page], view=self)
-
-            @self.discord.ui.button(label="◀️", style=self.discord.ButtonStyle.primary)
-            async def prev_page(self, interaction: self.discord.Interaction, button: self.discord.ui.Button):
-                self.current_page = max(0, self.current_page - 1)
-                self.update_buttons()
-                await interaction.response.edit_message(embed=self.embeds[self.current_page], view=self)
-
-            @self.discord.ui.button(label="🗑️", style=self.discord.ButtonStyle.danger)
-            async def delete_msg(self, interaction: self.discord.Interaction, button: self.discord.ui.Button):
-                await interaction.message.delete()
-                self.stop()
-
-            @self.discord.ui.button(label="▶️", style=self.discord.ButtonStyle.primary)
-            async def next_page(self, interaction: self.discord.Interaction, button: self.discord.ui.Button):
-                self.current_page = min(len(self.embeds) - 1, self.current_page + 1)
-                self.update_buttons()
-                await interaction.response.edit_message(embed=self.embeds[self.current_page], view=self)
-
-            @self.discord.ui.button(label="⏭️", style=self.discord.ButtonStyle.gray)
-            async def last_page(self, interaction: self.discord.Interaction, button: self.discord.ui.Button):
-                self.current_page = len(self.embeds) - 1
-                self.update_buttons()
-                await interaction.response.edit_message(embed=self.embeds[self.current_page], view=self)
-
-            async def on_timeout(self):
-                for item in self.children:
-                    item.disabled = True
-                if self.message:
-                    try:
-                        await self.message.edit(view=self)
-                    except:
-                        pass
-
         # ==================== USER COMMANDS ====================
         
-        # Trump command
+        # Trump command with embed
         @self.tree.command(name="trump", description="Get a random Trump quote")
         @self.app_commands.allowed_installs(guilds=True, users=True)
         @self.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
@@ -223,16 +241,18 @@ class Bot:
                     quote = response.json().get("message", "Could not retrieve a quote.")
                     
                     embed = self.discord.Embed(
-                        title="🇺🇸 Trump Quote",
-                        description=f'"{quote}"',
-                        color=0xE74C3C,
-                        timestamp=datetime.now()
+                        description=f'*"{quote}"*',
+                        color=0xFF0000,
                     )
-                    embed.set_footer(text="~Donald Trump", icon_url="https://upload.wikimedia.org/wikipedia/commons/thumb/5/56/Donald_Trump_official_portrait.jpg/220px-Donald_Trump_official_portrait.jpg")
+                    embed.set_author(
+                        name="Donald Trump",
+                        icon_url="https://upload.wikimedia.org/wikipedia/commons/thumb/5/56/Donald_Trump_official_portrait.jpg/480px-Donald_Trump_official_portrait.jpg"
+                    )
+                    embed.set_footer(text="What Does Trump Think API")
                     
                     await interaction.followup.send(embed=embed, ephemeral=_ephemeral)
             except Exception as e:
-                await interaction.followup.send(f"❌ Sorry, an error occurred: {type(e).__name__}", ephemeral=_ephemeral)
+                await interaction.followup.send(f"❌ Error: {type(e).__name__}", ephemeral=_ephemeral)
 
         @self.tree.command(name="ptrump", description="[Private] Get a random Trump quote")
         @self.app_commands.allowed_installs(guilds=True, users=True)
@@ -240,7 +260,7 @@ class Bot:
         async def ptrump_slash(interaction: self.discord.Interaction):
             await trump_slash(interaction, _ephemeral=True)
 
-        # Websites command
+        # Websites command with embed
         @self.tree.command(name="websites", description="Check status of configured websites")
         @self.app_commands.allowed_installs(guilds=True, users=True)
         @self.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
@@ -260,57 +280,54 @@ class Bot:
             
             embed = self.discord.Embed(
                 title="🌐 Website Status",
-                description="Checking configured websites...",
                 color=0x3498DB,
                 timestamp=datetime.now()
             )
             
-            if sites:
-                async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient() as client:
+                if sites and isinstance(sites, list):
+                    site_status = []
                     responses = await asyncio.gather(
                         *[client.head(site, timeout=10) for site in sites],
                         return_exceptions=True,
                     )
-                    
-                    site_status = []
                     for site, resp in zip(sites, responses):
                         if isinstance(resp, httpx.Response) and 200 <= resp.status_code < 400:
-                            site_status.append(f"🟢 [{site}]({site})")
+                            site_status.append(f"🟢 `{site}` ({resp.status_code})")
                         else:
-                            site_status.append(f"🔴 [{site}]({site})")
+                            error = type(resp).__name__ if isinstance(resp, Exception) else f"{resp.status_code}"
+                            site_status.append(f"🔴 `{site}` ({error})")
                     
-                    embed.add_field(
-                        name="📌 Your Websites",
-                        value="\n".join(site_status) if site_status else "No websites configured",
-                        inline=False
-                    )
-            
-            if friend_sites:
-                async with httpx.AsyncClient() as client:
+                    if site_status:
+                        embed.add_field(
+                            name="Main Websites",
+                            value="\n".join(site_status),
+                            inline=False
+                        )
+                
+                if friend_sites and isinstance(friend_sites, list):
+                    friend_status = []
                     responses = await asyncio.gather(
                         *[client.head(site, timeout=10) for site in friend_sites],
                         return_exceptions=True,
                     )
-                    
-                    friend_status = []
                     for site, resp in zip(friend_sites, responses):
                         if isinstance(resp, httpx.Response) and 200 <= resp.status_code < 400:
-                            friend_status.append(f"🟢 [{site}]({site})")
+                            friend_status.append(f"🟢 `{site}` ({resp.status_code})")
                         else:
-                            friend_status.append(f"🔴 [{site}]({site})")
+                            error = type(resp).__name__ if isinstance(resp, Exception) else f"{resp.status_code}"
+                            friend_status.append(f"🔴 `{site}` ({error})")
                     
-                    embed.add_field(
-                        name="👥 Friends' Websites",
-                        value="\n".join(friend_status) if friend_status else "No websites configured",
-                        inline=False
-                    )
+                    if friend_status:
+                        embed.add_field(
+                            name="Friends' Websites",
+                            value="\n".join(friend_status),
+                            inline=False
+                        )
             
-            if not sites and not friend_sites:
-                embed.description = "❌ No websites are configured."
-            else:
-                embed.description = None
+            if not embed.fields:
+                embed.description = "No websites configured."
             
-            embed.set_footer(text=f"Requested by {interaction.user.name}", icon_url=interaction.user.display_avatar.url)
             await interaction.followup.send(embed=embed, ephemeral=_ephemeral)
 
         @self.tree.command(name="pwebsites", description="[Private] Check status of configured websites")
@@ -319,7 +336,7 @@ class Bot:
         async def pwebsites_slash(interaction: self.discord.Interaction):
             await websites_slash(interaction, _ephemeral=True)
 
-        # Pings command
+        # Pings command with embed
         @self.tree.command(name="pings", description="Ping configured devices")
         @self.app_commands.allowed_installs(guilds=True, users=True)
         @self.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
@@ -334,21 +351,29 @@ class Bot:
                 try:
                     proc = await asyncio.create_subprocess_exec("ping", "-c", "1", "-W", "1", hostname, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
                     await proc.wait()
-                    status = "🟢 Responding" if proc.returncode == 0 else "🔴 Unreachable"
-                    return f"`{hostname.replace('.liforra.de', '')}` - {status}"
+                    status = "🟢 Online" if proc.returncode == 0 else "🔴 Offline"
+                    return (hostname.replace('.liforra.de', ''), status, proc.returncode == 0)
                 except Exception as e:
-                    return f"`{hostname.replace('.liforra.de', '')}` - ⚠️ Error"
+                    return (hostname.replace('.liforra.de', ''), f"❌ Error", False)
 
             devices = ["alhena.liforra.de", "sirius.liforra.de", "chaosserver.liforra.de", "antares.liforra.de"]
             results = await asyncio.gather(*[_ping(dev) for dev in devices])
             
             embed = self.discord.Embed(
-                title="🖥️ Device Ping Status",
-                description="\n".join(results),
+                title="🖥️ Device Status",
                 color=0x2ECC71,
                 timestamp=datetime.now()
             )
-            embed.set_footer(text=f"Requested by {interaction.user.name}", icon_url=interaction.user.display_avatar.url)
+            
+            for name, status, is_online in results:
+                embed.add_field(
+                    name=name,
+                    value=status,
+                    inline=True
+                )
+            
+            online_count = sum(1 for _, _, is_online in results if is_online)
+            embed.set_footer(text=f"{online_count}/{len(results)} devices responding")
             
             await interaction.followup.send(embed=embed, ephemeral=_ephemeral)
 
@@ -358,7 +383,7 @@ class Bot:
         async def ppings_slash(interaction: self.discord.Interaction):
             await pings_slash(interaction, _ephemeral=True)
 
-        # IP Info command
+        # IP Info command with improved embed
         @self.tree.command(name="ip", description="Get information about an IP address")
         @self.app_commands.describe(address="The IP address to look up (IPv4 or IPv6)")
         @self.app_commands.allowed_installs(guilds=True, users=True)
@@ -387,34 +412,81 @@ class Bot:
             embed = self.discord.Embed(
                 title=f"{flag} IP Information",
                 description=f"**IP Address:** `{address}`",
-                color=0x9B59B6,
+                color=0x3498DB,
                 timestamp=datetime.now()
             )
             
-            embed.add_field(name="🌍 Country", value=f"{ip_data.get('country', 'N/A')} ({ip_data.get('countryCode', 'N/A')})", inline=True)
-            embed.add_field(name="📍 Region", value=ip_data.get('regionName', 'N/A'), inline=True)
-            embed.add_field(name="🏙️ City", value=ip_data.get('city', 'N/A'), inline=True)
-            embed.add_field(name="📮 ZIP", value=ip_data.get('zip', 'N/A'), inline=True)
-            embed.add_field(name="🕐 Timezone", value=ip_data.get('timezone', 'N/A'), inline=True)
-            embed.add_field(name="📡 ISP", value=ip_data.get('isp', 'N/A'), inline=True)
-            embed.add_field(name="🏢 Organization", value=ip_data.get('org', 'N/A'), inline=False)
-            
-            vpn_provider = self.ip_handler.detect_vpn_provider(ip_data.get("isp", ""), ip_data.get("org", ""))
-            security_info = []
-            if vpn_provider:
-                security_info.append(f"🔒 **VPN Provider:** {vpn_provider}")
-            elif ip_data.get("proxy"):
-                security_info.append("🔒 **Proxy/VPN:** Yes")
-            if ip_data.get("hosting"):
-                security_info.append("☁️ **VPS/Hosting:** Yes")
-            
-            if security_info:
-                embed.add_field(name="🔐 Security Info", value="\n".join(security_info), inline=False)
-            
             if not is_valid_ipv6(address):
-                embed.add_field(name="🔗 Links", value=f"[View on WhatIsMyIP](https://whatismyipaddress.com/ip/{address})", inline=False)
+                embed.url = f"https://whatismyipaddress.com/ip/{address}"
             
-            embed.set_footer(text=f"Requested by {interaction.user.name}", icon_url=interaction.user.display_avatar.url)
+            # Location info
+            location_parts = []
+            if ip_data.get('city'):
+                location_parts.append(ip_data['city'])
+            if ip_data.get('regionName'):
+                location_parts.append(ip_data['regionName'])
+            if ip_data.get('country'):
+                location_parts.append(f"{ip_data['country']} ({ip_data.get('countryCode', 'N/A')})")
+            
+            if location_parts:
+                embed.add_field(
+                    name="📍 Location",
+                    value=", ".join(location_parts),
+                    inline=False
+                )
+            
+            # Coordinates and timezone
+            details = []
+            if ip_data.get('lat') and ip_data.get('lon'):
+                details.append(f"**Coordinates:** {ip_data['lat']}, {ip_data['lon']}")
+            if ip_data.get('timezone'):
+                details.append(f"**Timezone:** {ip_data['timezone']}")
+            if ip_data.get('zip'):
+                details.append(f"**ZIP:** {ip_data['zip']}")
+            
+            if details:
+                embed.add_field(
+                    name="🗺️ Details",
+                    value="\n".join(details),
+                    inline=False
+                )
+            
+            # Network info
+            network_info = []
+            if ip_data.get('isp'):
+                network_info.append(f"**ISP:** {ip_data['isp']}")
+            if ip_data.get('org'):
+                network_info.append(f"**Organization:** {ip_data['org']}")
+            if ip_data.get('as'):
+                network_info.append(f"**AS:** {ip_data['as']}")
+            
+            if network_info:
+                embed.add_field(
+                    name="🌐 Network",
+                    value="\n".join(network_info),
+                    inline=False
+                )
+            
+            # VPN/Proxy detection
+            vpn_provider = self.ip_handler.detect_vpn_provider(ip_data.get("isp", ""), ip_data.get("org", ""))
+            security_flags = []
+            
+            if vpn_provider:
+                security_flags.append(f"🔒 **VPN Provider:** {vpn_provider}")
+            elif ip_data.get("proxy"):
+                security_flags.append("🔒 **Proxy/VPN Detected**")
+            
+            if ip_data.get("hosting"):
+                security_flags.append("☁️ **VPS/Hosting Service**")
+            
+            if security_flags:
+                embed.add_field(
+                    name="🛡️ Security",
+                    value="\n".join(security_flags),
+                    inline=False
+                )
+            
+            embed.set_footer(text="Powered by ip-api.com")
             
             await interaction.followup.send(embed=embed, ephemeral=_ephemeral)
 
@@ -425,11 +497,107 @@ class Bot:
         async def pip_slash(interaction: self.discord.Interaction, address: str):
             await ip_slash(interaction, address, _ephemeral=True)
 
-        # IP DB List command with pagination
-        @self.tree.command(name="ipdblist", description="List all cached IPs in database")
+        # IP DB Info command
+        @self.tree.command(name="ipdbinfo", description="Get cached information about an IP from database")
+        @self.app_commands.describe(address="The IP address to look up")
         @self.app_commands.allowed_installs(guilds=True, users=True)
         @self.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
-        async def ipdblist_slash(interaction: self.discord.Interaction, _ephemeral: bool = False):
+        async def ipdbinfo_slash(interaction: self.discord.Interaction, address: str, _ephemeral: bool = False):
+            if not self.check_authorization(interaction.user.id):
+                await interaction.response.send_message(
+                    self.oauth_handler.get_authorization_message(interaction.user.mention),
+                    ephemeral=True
+                )
+                return
+            
+            if address not in self.ip_handler.ip_geo_data:
+                await interaction.response.send_message(
+                    f"❌ No data for `{address}` in database",
+                    ephemeral=_ephemeral
+                )
+                return
+
+            geo = self.ip_handler.ip_geo_data[address]
+            flag = COUNTRY_FLAGS.get(geo.get("countryCode", ""), "🌐")
+
+            embed = self.discord.Embed(
+                title=f"{flag} Cached IP Information",
+                description=f"**IP Address:** `{address}`",
+                color=0x9B59B6,
+                timestamp=datetime.now()
+            )
+
+            if not is_valid_ipv6(address):
+                embed.url = f"https://whatismyipaddress.com/ip/{address}"
+
+            # Location
+            location_parts = []
+            if geo.get('city'):
+                location_parts.append(geo['city'])
+            if geo.get('regionName'):
+                location_parts.append(geo['regionName'])
+            if geo.get('country'):
+                location_parts.append(f"{geo['country']} ({geo.get('countryCode', 'N/A')})")
+            
+            if location_parts:
+                embed.add_field(
+                    name="📍 Location",
+                    value=", ".join(location_parts),
+                    inline=False
+                )
+
+            # Network
+            network_info = []
+            if geo.get('isp'):
+                network_info.append(f"**ISP:** {geo['isp']}")
+            if geo.get('org'):
+                network_info.append(f"**Organization:** {geo['org']}")
+            
+            if network_info:
+                embed.add_field(
+                    name="🌐 Network",
+                    value="\n".join(network_info),
+                    inline=False
+                )
+
+            # Security
+            vpn_provider = self.ip_handler.detect_vpn_provider(
+                geo.get("isp", ""), geo.get("org", "")
+            )
+            security_flags = []
+
+            if vpn_provider:
+                security_flags.append(f"🔒 **VPN Provider:** {vpn_provider}")
+            elif geo.get("proxy"):
+                security_flags.append("🔒 **Proxy/VPN Detected**")
+
+            if geo.get("hosting"):
+                security_flags.append("☁️ **VPS/Hosting Service**")
+            
+            if security_flags:
+                embed.add_field(
+                    name="🛡️ Security",
+                    value="\n".join(security_flags),
+                    inline=False
+                )
+
+            embed.set_footer(text=f"Last updated: {geo.get('last_updated', 'N/A')[:10]}")
+
+            await interaction.response.send_message(embed=embed, ephemeral=_ephemeral)
+
+        @self.tree.command(name="pipdbinfo", description="[Private] Get cached information about an IP from database")
+        @self.app_commands.describe(address="The IP address to look up")
+        @self.app_commands.allowed_installs(guilds=True, users=True)
+        @self.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+        async def pipdbinfo_slash(interaction: self.discord.Interaction, address: str):
+            await ipdbinfo_slash(interaction, address, _ephemeral=True)
+
+        # IP DB List with pagination
+        @self.tree.command(name="ipdblist", description="List all cached IPs in database")
+        @self.app_commands.describe(page="Page number (default: 1)")
+        @self.app_commands.allowed_installs(guilds=True, users=True)
+        @self.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+        async def ipdblist_slash(interaction: self.discord.Interaction, page: int = 1, _ephemeral: bool = False):
             if not self.check_authorization(interaction.user.id):
                 await interaction.response.send_message(
                     self.oauth_handler.get_authorization_message(interaction.user.mention),
@@ -444,23 +612,19 @@ class Bot:
             total_pages = (len(ips) + per_page - 1) // per_page
             
             if not ips:
-                embed = self.discord.Embed(
-                    title="📊 IP Database",
-                    description="❌ No IPs in database",
-                    color=0xE74C3C
-                )
-                await interaction.followup.send(embed=embed, ephemeral=_ephemeral)
+                await interaction.followup.send("❌ No IPs in database", ephemeral=_ephemeral)
                 return
             
+            # Create embeds for all pages
             embeds = []
-            for page in range(total_pages):
-                start = page * per_page
+            for page_num in range(1, total_pages + 1):
+                start = (page_num - 1) * per_page
                 page_ips = ips[start : start + per_page]
                 
                 embed = self.discord.Embed(
-                    title="📊 Cached IP Database",
-                    description=f"Showing page {page + 1} of {total_pages} ({len(ips)} total IPs)",
-                    color=0x3498DB,
+                    title="🗄️ IP Database",
+                    description=f"Showing cached IP addresses",
+                    color=0x9B59B6,
                     timestamp=datetime.now()
                 )
                 
@@ -468,22 +632,29 @@ class Bot:
                 for ip in page_ips:
                     ip_list.append(self.ip_handler.format_ip_with_geo(ip))
                 
-                embed.add_field(name="🌐 IP Addresses", value="\n".join(ip_list), inline=False)
-                embed.set_footer(text=f"Page {page + 1}/{total_pages} • Requested by {interaction.user.name}", icon_url=interaction.user.display_avatar.url)
+                embed.add_field(
+                    name=f"IP Addresses ({len(ips)} total)",
+                    value="\n".join(ip_list),
+                    inline=False
+                )
+                
+                embed.set_footer(text=f"Page {page_num}/{total_pages} • {len(ips)} total IPs")
                 embeds.append(embed)
             
             if len(embeds) == 1:
                 await interaction.followup.send(embed=embeds[0], ephemeral=_ephemeral)
             else:
-                view = PaginationView(embeds, interaction.user.id)
-                message = await interaction.followup.send(embed=embeds[0], view=view, ephemeral=_ephemeral)
-                view.message = message
+                pagination = PaginationView(embeds, self.discord)
+                pagination.current_page = page - 1 if 0 <= page - 1 < len(embeds) else 0
+                pagination._update_buttons()
+                await interaction.followup.send(embed=embeds[pagination.current_page], view=pagination.view, ephemeral=_ephemeral)
 
         @self.tree.command(name="pipdblist", description="[Private] List all cached IPs in database")
+        @self.app_commands.describe(page="Page number (default: 1)")
         @self.app_commands.allowed_installs(guilds=True, users=True)
         @self.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
-        async def pipdblist_slash(interaction: self.discord.Interaction):
-            await ipdblist_slash(interaction, _ephemeral=True)
+        async def pipdblist_slash(interaction: self.discord.Interaction, page: int = 1):
+            await ipdblist_slash(interaction, page, _ephemeral=True)
 
         # IP DB Search command
         @self.tree.command(name="ipdbsearch", description="Search IPs by country, city, or ISP")
@@ -518,43 +689,46 @@ class Bot:
                     results.append(ip)
 
             if not results:
-                embed = self.discord.Embed(
-                    title="🔍 IP Search Results",
-                    description=f"❌ No IPs found matching `{term}`",
-                    color=0xE74C3C
+                await interaction.followup.send(
+                    f"❌ No IPs found matching '{term}'",
+                    ephemeral=_ephemeral
                 )
-                await interaction.followup.send(embed=embed, ephemeral=_ephemeral)
                 return
-            
+
+            # Create paginated embeds
             per_page = 15
             total_pages = (len(results) + per_page - 1) // per_page
-            
             embeds = []
-            for page in range(total_pages):
-                start = page * per_page
+
+            for page_num in range(1, total_pages + 1):
+                start = (page_num - 1) * per_page
                 page_results = results[start : start + per_page]
-                
+
                 embed = self.discord.Embed(
                     title=f"🔍 Search Results for '{term}'",
-                    description=f"Found {len(results)} matching IPs (page {page + 1}/{total_pages})",
-                    color=0x2ECC71,
+                    description=f"Found {len(results)} matching IP(s)",
+                    color=0xE67E22,
                     timestamp=datetime.now()
                 )
-                
+
                 ip_list = []
                 for ip in page_results:
                     ip_list.append(self.ip_handler.format_ip_with_geo(ip))
-                
-                embed.add_field(name="🌐 Matching IPs", value="\n".join(ip_list), inline=False)
-                embed.set_footer(text=f"Page {page + 1}/{total_pages} • Requested by {interaction.user.name}", icon_url=interaction.user.display_avatar.url)
+
+                embed.add_field(
+                    name="Matching IPs",
+                    value="\n".join(ip_list),
+                    inline=False
+                )
+
+                embed.set_footer(text=f"Page {page_num}/{total_pages}")
                 embeds.append(embed)
-            
+
             if len(embeds) == 1:
                 await interaction.followup.send(embed=embeds[0], ephemeral=_ephemeral)
             else:
-                view = PaginationView(embeds, interaction.user.id)
-                message = await interaction.followup.send(embed=embeds[0], view=view, ephemeral=_ephemeral)
-                view.message = message
+                pagination = PaginationView(embeds, self.discord)
+                await interaction.followup.send(embed=embeds[0], view=pagination.view, ephemeral=_ephemeral)
 
         @self.tree.command(name="pipdbsearch", description="[Private] Search IPs by country, city, or ISP")
         @self.app_commands.describe(term="Search term")
@@ -595,16 +769,35 @@ class Bot:
 
             embed = self.discord.Embed(
                 title="📊 IP Database Statistics",
-                color=0x3498DB,
+                color=0x1ABC9C,
                 timestamp=datetime.now()
             )
-            
-            embed.add_field(name="🌐 Total IPs", value=f"`{total_ips}`", inline=True)
-            embed.add_field(name="🗺️ Unique Countries", value=f"`{len(countries)}`", inline=True)
-            embed.add_field(name="🔒 VPN/Proxy IPs", value=f"`{vpn_count}`", inline=True)
-            embed.add_field(name="☁️ VPS/Hosting IPs", value=f"`{hosting_count}`", inline=True)
-            
-            embed.set_footer(text=f"Requested by {interaction.user.name}", icon_url=interaction.user.display_avatar.url)
+
+            embed.add_field(
+                name="Total IPs",
+                value=f"**{total_ips}**",
+                inline=True
+            )
+
+            embed.add_field(
+                name="Unique Countries",
+                value=f"**{len(countries)}**",
+                inline=True
+            )
+
+            embed.add_field(
+                name="VPN/Proxy",
+                value=f"**{vpn_count}**",
+                inline=True
+            )
+
+            embed.add_field(
+                name="VPS/Hosting",
+                value=f"**{hosting_count}**",
+                inline=True
+            )
+
+            embed.set_footer(text="Database snapshot")
 
             await interaction.response.send_message(embed=embed, ephemeral=_ephemeral)
 
@@ -613,73 +806,6 @@ class Bot:
         @self.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
         async def pipdbstats_slash(interaction: self.discord.Interaction):
             await ipdbstats_slash(interaction, _ephemeral=True)
-
-        # IP DB Info command
-        @self.tree.command(name="ipdbinfo", description="Get cached information about an IP from database")
-        @self.app_commands.describe(address="The IP address to look up")
-        @self.app_commands.allowed_installs(guilds=True, users=True)
-        @self.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
-        async def ipdbinfo_slash(interaction: self.discord.Interaction, address: str, _ephemeral: bool = False):
-            if not self.check_authorization(interaction.user.id):
-                await interaction.response.send_message(
-                    self.oauth_handler.get_authorization_message(interaction.user.mention),
-                    ephemeral=True
-                )
-                return
-            
-            if address not in self.ip_handler.ip_geo_data:
-                embed = self.discord.Embed(
-                    title="❌ Not Found",
-                    description=f"No cached data for `{address}` in database",
-                    color=0xE74C3C
-                )
-                await interaction.response.send_message(embed=embed, ephemeral=_ephemeral)
-                return
-
-            geo = self.ip_handler.ip_geo_data[address]
-            flag = COUNTRY_FLAGS.get(geo.get("countryCode", ""), "🌐")
-
-            embed = self.discord.Embed(
-                title=f"{flag} Cached IP Information",
-                description=f"**IP Address:** `{address}`",
-                color=0x9B59B6,
-                timestamp=datetime.now()
-            )
-            
-            embed.add_field(name="🌍 Country", value=f"{geo.get('country', 'N/A')} ({geo.get('countryCode', 'N/A')})", inline=True)
-            embed.add_field(name="📍 Region", value=geo.get('regionName', 'N/A'), inline=True)
-            embed.add_field(name="🏙️ City", value=geo.get('city', 'N/A'), inline=True)
-            embed.add_field(name="📡 ISP", value=geo.get('isp', 'N/A'), inline=False)
-            embed.add_field(name="🏢 Organization", value=geo.get('org', 'N/A'), inline=False)
-
-            vpn_provider = self.ip_handler.detect_vpn_provider(
-                geo.get("isp", ""), geo.get("org", "")
-            )
-
-            security_info = []
-            if vpn_provider:
-                security_info.append(f"🔒 **VPN Provider:** {vpn_provider}")
-            elif geo.get("proxy"):
-                security_info.append("🔒 **Proxy/VPN:** Yes")
-            if geo.get("hosting"):
-                security_info.append("☁️ **VPS/Hosting:** Yes")
-            
-            if security_info:
-                embed.add_field(name="🔐 Security Info", value="\n".join(security_info), inline=False)
-
-            last_updated = geo.get('last_updated', 'N/A')[:10]
-            embed.add_field(name="🕐 Last Updated", value=last_updated, inline=False)
-            
-            embed.set_footer(text=f"Requested by {interaction.user.name}", icon_url=interaction.user.display_avatar.url)
-
-            await interaction.response.send_message(embed=embed, ephemeral=_ephemeral)
-
-        @self.tree.command(name="pipdbinfo", description="[Private] Get cached information about an IP from database")
-        @self.app_commands.describe(address="The IP address to look up")
-        @self.app_commands.allowed_installs(guilds=True, users=True)
-        @self.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
-        async def pipdbinfo_slash(interaction: self.discord.Interaction, address: str):
-            await ipdbinfo_slash(interaction, address, _ephemeral=True)
 
         # IP DB Refresh command (admin only)
         @self.tree.command(name="ipdbrefresh", description="[ADMIN] Refresh all IP geolocation data")
@@ -695,12 +821,7 @@ class Bot:
             all_ips = list(self.ip_handler.ip_geo_data.keys())
 
             if not all_ips:
-                embed = self.discord.Embed(
-                    title="❌ Error",
-                    description="No IPs in database to refresh",
-                    color=0xE74C3C
-                )
-                await interaction.followup.send(embed=embed, ephemeral=_ephemeral)
+                await interaction.followup.send("❌ No IPs in database to refresh", ephemeral=_ephemeral)
                 return
 
             geo_results = await self.ip_handler.fetch_ip_info_batch(all_ips)
@@ -724,11 +845,10 @@ class Bot:
 
             embed = self.discord.Embed(
                 title="✅ Refresh Complete",
-                description=f"Successfully refreshed `{len(geo_results)}` IP records",
+                description=f"Successfully refreshed **{len(geo_results)}** IP records",
                 color=0x2ECC71,
                 timestamp=datetime.now()
             )
-            embed.set_footer(text=f"Requested by {interaction.user.name}", icon_url=interaction.user.display_avatar.url)
 
             await interaction.followup.send(embed=embed, ephemeral=_ephemeral)
 
@@ -738,7 +858,7 @@ class Bot:
         async def pipdbrefresh_slash(interaction: self.discord.Interaction):
             await ipdbrefresh_slash(interaction, _ephemeral=True)
 
-        # PlayerInfo command
+        # PlayerInfo command with fixed skin and LabyMod link
         @self.tree.command(name="playerinfo", description="Get detailed information about a Minecraft player")
         @self.app_commands.describe(username="The Minecraft username to look up")
         @self.app_commands.allowed_installs(guilds=True, users=True)
@@ -764,20 +884,14 @@ class Bot:
                     data = response.json()
                     
                     if data.get("code") != "player.found":
-                        embed = self.discord.Embed(
-                            title="❌ Player Not Found",
-                            description=f"Could not find Minecraft player `{username}`",
-                            color=0xE74C3C
-                        )
-                        await interaction.followup.send(embed=embed, ephemeral=_ephemeral)
+                        await interaction.followup.send(f"❌ Player `{username}` not found", ephemeral=_ephemeral)
                         return
                     
                     player = data["data"]["player"]
                     
-                    # Create beautiful embed
                     embed = self.discord.Embed(
                         title=f"🎮 {player['username']}",
-                        description=f"Detailed information about Minecraft player **{player['username']}**",
+                        description=f"Minecraft Player Information",
                         color=0x2ECC71,
                         url=f"https://namemc.com/profile/{player['username']}"
                     )
@@ -798,24 +912,24 @@ class Bot:
                         inline=False
                     )
                     
-                    # Links
+                    # Links with LabyMod
                     links = [
                         f"[NameMC](https://namemc.com/profile/{player['username']})",
-                        f"[Avatar]({player['avatar']})",
-                        f"[Skin](https://crafatar.com/skins/{player['raw_id']})"
+                        f"[LabyMod](https://laby.net/@{player['username']})",
+                        f"[Skin Download](https://crafatar.com/skins/{player['raw_id']})"
                     ]
                     embed.add_field(
-                        name="🔗 Links",
+                        name="🔗 Profile Links",
                         value=" • ".join(links),
                         inline=False
                     )
                     
-                    # Name History (if available)
+                    # Name History
                     if player.get('name_history') and len(player['name_history']) > 0:
                         history_list = player['name_history'][:8]
                         history_text = " → ".join([f"`{name}`" for name in history_list])
                         if len(player['name_history']) > 8:
-                            history_text += f"\n*... and {len(player['name_history']) - 8} more*"
+                            history_text += f"\n*... and {len(player['name_history']) - 8} more names*"
                         
                         embed.add_field(
                             name="📜 Name History",
@@ -823,8 +937,8 @@ class Bot:
                             inline=False
                         )
                     
-                    # Skin preview (full body with overlay)
-                    skin_render = f"https://mc-heads.net/body/{player['raw_id']}/right"
+                    # Fixed skin render - using Crafatar which is more reliable
+                    skin_render = f"https://crafatar.com/renders/body/{player['raw_id']}?overlay=true&size=512"
                     embed.set_image(url=skin_render)
                     
                     # Footer with cache info
@@ -833,27 +947,17 @@ class Bot:
                         cached_time = datetime.fromtimestamp(cached_at).strftime('%Y-%m-%d %H:%M:%S UTC')
                         embed.set_footer(
                             text=f"Data cached at {cached_time}",
-                            icon_url="https://mc-heads.net/head/MHF_Question/8"
+                            icon_url=player['avatar']
                         )
                     else:
-                        embed.set_footer(text="Powered by PlayerDB")
+                        embed.set_footer(text="Powered by PlayerDB", icon_url=player['avatar'])
                     
                     await interaction.followup.send(embed=embed, ephemeral=_ephemeral)
                     
             except httpx.HTTPStatusError as e:
-                embed = self.discord.Embed(
-                    title="❌ API Error",
-                    description=f"Failed to fetch player data: HTTP {e.response.status_code}",
-                    color=0xE74C3C
-                )
-                await interaction.followup.send(embed=embed, ephemeral=_ephemeral)
+                await interaction.followup.send(f"❌ API Error: {e.response.status_code}", ephemeral=_ephemeral)
             except Exception as e:
-                embed = self.discord.Embed(
-                    title="❌ Error",
-                    description=f"An unexpected error occurred: {type(e).__name__}",
-                    color=0xE74C3C
-                )
-                await interaction.followup.send(embed=embed, ephemeral=_ephemeral)
+                await interaction.followup.send(f"❌ Error: {type(e).__name__}", ephemeral=_ephemeral)
 
         @self.tree.command(name="pplayerinfo", description="[Private] Get detailed information about a Minecraft player")
         @self.app_commands.describe(username="The Minecraft username to look up")
@@ -871,12 +975,7 @@ class Bot:
             await interaction.response.defer(ephemeral=_ephemeral)
             
             if not str(interaction.user.id) in self.config.admin_ids:
-                embed = self.discord.Embed(
-                    title="❌ Access Denied",
-                    description="This command is admin-only.",
-                    color=0xE74C3C
-                )
-                await interaction.followup.send(embed=embed, ephemeral=True)
+                await interaction.followup.send("❌ This command is admin-only.", ephemeral=True)
                 return
             
             search_term = username
@@ -890,104 +989,77 @@ class Bot:
                     break
             
             if not found_user:
-                embed = self.discord.Embed(
-                    title="❌ Not Found",
-                    description=f"No data for `{search_term}` in the alts database",
-                    color=0xE74C3C
-                )
-                await interaction.followup.send(embed=embed, ephemeral=_ephemeral)
+                await interaction.followup.send(f"❌ No data for `{search_term}`", ephemeral=_ephemeral)
                 return
             
             data = self.alts_handler.alts_data[found_user]
             alts = sorted(list(data.get("alts", set())))
             ips = sorted(list(data.get("ips", set())))
             
-            # Create paginated embeds
+            # Create embeds
             embeds = []
-            per_page_alts = 20
-            per_page_ips = 10
+            per_page_alts = 30
+            per_page_ips = 15
             
-            # First embed - overview
-            main_embed = self.discord.Embed(
-                title=f"👥 Alts Data for {format_alt_name(found_user)}",
-                description=f"**Total Alts:** `{len(alts)}` • **Total IPs:** `{len(ips)}`",
-                color=0xE67E22,
-                timestamp=datetime.now()
-            )
+            # Calculate how many pages we need
+            alt_pages = (len(alts) + per_page_alts - 1) // per_page_alts if alts else 0
+            ip_pages = (len(ips) + per_page_ips - 1) // per_page_ips if ips else 0
+            total_pages = max(alt_pages, ip_pages, 1)
             
-            main_embed.add_field(
-                name="📅 First Seen",
-                value=data.get('first_seen', 'N/A')[:10],
-                inline=True
-            )
-            main_embed.add_field(
-                name="🔄 Last Updated",
-                value=data.get('last_updated', 'N/A')[:10],
-                inline=True
-            )
-            
-            main_embed.set_footer(text=f"Page 1 • Requested by {interaction.user.name}", icon_url=interaction.user.display_avatar.url)
-            embeds.append(main_embed)
-            
-            # Alts pages
-            if alts:
-                total_alt_pages = (len(alts) + per_page_alts - 1) // per_page_alts
-                for page in range(total_alt_pages):
-                    start = page * per_page_alts
-                    page_alts = alts[start : start + per_page_alts]
-                    
-                    embed = self.discord.Embed(
-                        title=f"👥 Alts for {format_alt_name(found_user)}",
-                        description=f"Showing alts {start + 1}-{start + len(page_alts)} of {len(alts)}",
-                        color=0xE67E22,
-                        timestamp=datetime.now()
+            for page_num in range(total_pages):
+                embed = self.discord.Embed(
+                    title=f"👥 Alt Accounts",
+                    color=0xE74C3C,
+                    timestamp=datetime.now(),
+                    url=f"https://namemc.com/search?q={found_user.lstrip('.')}"
+                )
+                
+                # Add metadata on first page
+                if page_num == 0:
+                    embed.description = (
+                        f"**Player:** {format_alt_name(found_user)}\n"
+                        f"**First Seen:** {data.get('first_seen', 'N/A')[:10]}\n"
+                        f"**Last Updated:** {data.get('last_updated', 'N/A')[:10]}"
                     )
-                    
+                
+                # Add alts for this page
+                if alts and page_num < alt_pages:
+                    start_alt = page_num * per_page_alts
+                    page_alts = alts[start_alt : start_alt + per_page_alts]
                     formatted_alts = [format_alt_name(alt) for alt in page_alts]
-                    alts_grid = format_alts_grid(formatted_alts, 3)
                     
-                    embed.add_field(
-                        name="🎮 Known Alts",
-                        value="\n".join(alts_grid),
-                        inline=False
-                    )
-                    
-                    embed.set_footer(text=f"Page {len(embeds) + 1} (Alts {page + 1}/{total_alt_pages}) • Requested by {interaction.user.name}", icon_url=interaction.user.display_avatar.url)
-                    embeds.append(embed)
-            
-            # IPs pages
-            if ips:
-                total_ip_pages = (len(ips) + per_page_ips - 1) // per_page_ips
-                for page in range(total_ip_pages):
-                    start = page * per_page_ips
-                    page_ips = ips[start : start + per_page_ips]
-                    
-                    embed = self.discord.Embed(
-                        title=f"🌐 IPs for {format_alt_name(found_user)}",
-                        description=f"Showing IPs {start + 1}-{start + len(page_ips)} of {len(ips)}",
-                        color=0xE67E22,
-                        timestamp=datetime.now()
-                    )
+                    # Split into columns of 10
+                    alt_columns = [formatted_alts[i:i+10] for i in range(0, len(formatted_alts), 10)]
+                    for i, column in enumerate(alt_columns):
+                        embed.add_field(
+                            name=f"Known Alts ({len(alts)} total)" if i == 0 else "\u200b",
+                            value="\n".join(column),
+                            inline=True
+                        )
+                
+                # Add IPs for this page
+                if ips and page_num < ip_pages:
+                    start_ip = page_num * per_page_ips
+                    page_ips = ips[start_ip : start_ip + per_page_ips]
                     
                     ip_list = []
                     for ip in page_ips:
                         ip_list.append(self.ip_handler.format_ip_with_geo(ip))
                     
                     embed.add_field(
-                        name="📍 Known IP Addresses",
+                        name=f"🌐 Known IP Addresses ({len(ips)} total)",
                         value="\n".join(ip_list),
                         inline=False
                     )
-                    
-                    embed.set_footer(text=f"Page {len(embeds) + 1} (IPs {page + 1}/{total_ip_pages}) • Requested by {interaction.user.name}", icon_url=interaction.user.display_avatar.url)
-                    embeds.append(embed)
+                
+                embed.set_footer(text=f"Page {page_num + 1}/{total_pages}")
+                embeds.append(embed)
             
             if len(embeds) == 1:
                 await interaction.followup.send(embed=embeds[0], ephemeral=_ephemeral)
             else:
-                view = PaginationView(embeds, interaction.user.id)
-                message = await interaction.followup.send(embed=embeds[0], view=view, ephemeral=_ephemeral)
-                view.message = message
+                pagination = PaginationView(embeds, self.discord)
+                await interaction.followup.send(embed=embeds[0], view=pagination.view, ephemeral=_ephemeral)
 
         @self.tree.command(name="palts", description="[Private] [ADMIN] Look up a user's known alts and IPs")
         @self.app_commands.describe(username="The username to look up")
@@ -1007,7 +1079,7 @@ class Bot:
                 color=0x3498DB,
                 timestamp=datetime.now()
             )
-            
+
             embed.add_field(
                 name="🎮 General Commands",
                 value=(
@@ -1019,22 +1091,29 @@ class Bot:
                 ),
                 inline=False
             )
-            
+
             embed.add_field(
                 name="🌐 IP Commands",
                 value=(
                     "`/ip <address>` - Get live IP information\n"
                     "`/ipdbinfo <address>` - Get cached IP info\n"
-                    "`/ipdblist` - List all cached IPs\n"
+                    "`/ipdblist [page]` - List all cached IPs\n"
                     "`/ipdbsearch <term>` - Search IPs\n"
                     "`/ipdbstats` - Show IP database stats"
                 ),
                 inline=False
             )
+
+            if self.token_type == "bot":
+                embed.add_field(
+                    name="🔒 Authorization",
+                    value=f"Most commands require authorization. [Click here to authorize]({self.oauth_handler.oauth_url})",
+                    inline=False
+                )
             
             if str(interaction.user.id) in self.config.admin_ids:
                 embed.add_field(
-                    name="🔧 Admin Commands",
+                    name="⚙️ Admin Commands",
                     value=(
                         "`/alts <username>` - Look up player alts and IPs\n"
                         "`/ipdbrefresh` - Refresh all IP data\n"
@@ -1047,19 +1126,13 @@ class Bot:
                 )
             
             embed.add_field(
-                name="💡 Pro Tip",
-                value="Prefix any command with `p` (e.g., `/pip`, `/palts`) to make the response private!",
+                name="💡 Tip",
+                value="Prefix any command with `p` (e.g., `/pip`, `/palts`) to make the response private (ephemeral)",
                 inline=False
             )
-            
-            if self.token_type == "bot":
-                embed.add_field(
-                    name="🔒 Authorization",
-                    value=f"Most commands require authorization. [Click here to authorize]({self.oauth_handler.oauth_url})",
-                    inline=False
-                )
-            
-            embed.set_footer(text=f"Requested by {interaction.user.name}", icon_url=interaction.user.display_avatar.url)
+
+            embed.set_footer(text="Use buttons to navigate multi-page results")
+
             await interaction.response.send_message(embed=embed, ephemeral=_ephemeral)
 
         @self.tree.command(name="phelp", description="[Private] Show available commands")
@@ -1088,20 +1161,15 @@ class Bot:
                 self.ip_handler.load_ip_geo_data()
                 
                 embed = self.discord.Embed(
-                    title="✅ Reload Complete",
-                    description="Successfully reloaded config, notes, alts, and IP data",
+                    title="✅ Config Reloaded",
+                    description="Successfully reloaded all configuration files",
                     color=0x2ECC71,
                     timestamp=datetime.now()
                 )
-                embed.set_footer(text=f"Requested by {interaction.user.name}", icon_url=interaction.user.display_avatar.url)
+                
                 await interaction.followup.send(embed=embed, ephemeral=_ephemeral)
             except Exception as e:
-                embed = self.discord.Embed(
-                    title="❌ Reload Failed",
-                    description=f"Error: {str(e)}",
-                    color=0xE74C3C
-                )
-                await interaction.followup.send(embed=embed, ephemeral=_ephemeral)
+                await interaction.followup.send(f"❌ Failed to reload config: {e}", ephemeral=_ephemeral)
 
         @self.tree.command(name="preloadconfig", description="[Private] [ADMIN] Reload all configuration files")
         @self.app_commands.allowed_installs(guilds=True, users=True)
@@ -1124,28 +1192,23 @@ class Bot:
                 for key in path.split("."):
                     value = value[key]
                 censored_value = self.config.censor_recursive(path, value)
-                
-                embed = self.discord.Embed(
-                    title=f"⚙️ Config: {path}",
-                    color=0x3498DB,
-                    timestamp=datetime.now()
+                display_str = (
+                    json.dumps(censored_value, indent=2)
+                    if isinstance(censored_value, dict)
+                    else f"`{censored_value}`"
                 )
-                
                 if isinstance(censored_value, dict):
-                    display_str = json.dumps(censored_value, indent=2)
-                    embed.description = f"```json\n{display_str}\n```"
+                    await interaction.response.send_message(
+                        f"✅ `{path}` =\n```json\n{display_str}\n```",
+                        ephemeral=_ephemeral
+                    )
                 else:
-                    embed.description = f"`{censored_value}`"
-                
-                embed.set_footer(text=f"Requested by {interaction.user.name}", icon_url=interaction.user.display_avatar.url)
-                await interaction.response.send_message(embed=embed, ephemeral=_ephemeral)
+                    await interaction.response.send_message(
+                        f"✅ `{path}` = {display_str}",
+                        ephemeral=_ephemeral
+                    )
             except (KeyError, TypeError):
-                embed = self.discord.Embed(
-                    title="❌ Path Not Found",
-                    description=f"Config path `{path}` does not exist",
-                    color=0xE74C3C
-                )
-                await interaction.response.send_message(embed=embed, ephemeral=_ephemeral)
+                await interaction.response.send_message(f"❌ Path not found: `{path}`", ephemeral=_ephemeral)
 
         @self.tree.command(name="pconfigget", description="[Private] [ADMIN] Get a configuration value")
         @self.app_commands.describe(path="Config path (e.g., general.prefix)")
@@ -1181,22 +1244,12 @@ class Bot:
                 target[keys[-1]] = self.config.parse_value(value)
                 with open(self.config.config_file, "w", encoding="utf-8") as f:
                     toml.dump(self.config.config_data, f)
-                
-                embed = self.discord.Embed(
-                    title="✅ Config Updated",
-                    description=f"Set `{path}` to `{target[keys[-1]]}`",
-                    color=0x2ECC71,
-                    timestamp=datetime.now()
+                await interaction.followup.send(
+                    f"✅ Set `{path}` to `{target[keys[-1]]}` and saved.",
+                    ephemeral=_ephemeral
                 )
-                embed.set_footer(text=f"Requested by {interaction.user.name}", icon_url=interaction.user.display_avatar.url)
-                await interaction.followup.send(embed=embed, ephemeral=_ephemeral)
             except Exception as e:
-                embed = self.discord.Embed(
-                    title="❌ Update Failed",
-                    description=f"Error: {str(e)}",
-                    color=0xE74C3C
-                )
-                await interaction.followup.send(embed=embed, ephemeral=_ephemeral)
+                await interaction.followup.send(f"❌ Failed to set config: {e}", ephemeral=_ephemeral)
 
         @self.tree.command(name="pconfigset", description="[Private] [ADMIN] Set a configuration value")
         @self.app_commands.describe(path="Config path (e.g., general.prefix)", value="New value")
@@ -1218,27 +1271,21 @@ class Bot:
             uid = interaction.user.id
             cid = interaction.channel.id
             
-            embed = self.discord.Embed(
-                title=f"🔍 Debug Info for {self.client.user}",
-                color=0x95A5A6,
-                timestamp=datetime.now()
-            )
-            
-            embed.add_field(name="👤 Is Admin", value=f"`{str(uid) in self.config.admin_ids}`", inline=True)
-            embed.add_field(name="⚙️ Prefix", value=f"`{self.config.get_prefix(gid)}`", inline=True)
-            embed.add_field(name="📝 Message Log", value=f"`{self.config.get_guild_config(gid, 'message-log', self.config.default_message_log, uid, cid)}`", inline=True)
-            embed.add_field(name="📎 Attachment Log", value=f"`{self.config.get_attachment_log_setting(gid, uid, cid)}`", inline=True)
-            embed.add_field(name="🚫 Prevent Deleting", value=f"`{self.config.get_guild_config(gid, 'prevent-deleting', self.config.default_prevent_deleting, uid, cid)}`", inline=True)
-            embed.add_field(name="✏️ Prevent Editing", value=f"`{self.config.get_guild_config(gid, 'prevent-editing', self.config.default_prevent_editing, uid, cid)}`", inline=True)
-            embed.add_field(name="💬 Allow Swears", value=f"`{self.config.get_guild_config(gid, 'allow-swears', self.config.default_allow_swears, uid, cid)}`", inline=True)
-            embed.add_field(name="🔞 Allow Slurs", value=f"`{self.config.get_guild_config(gid, 'allow-slurs', self.config.default_allow_slurs, uid, cid)}`", inline=True)
-            embed.add_field(name="🌐 Detect IPs", value=f"`{self.config.get_guild_config(gid, 'detect-ips', self.config.default_detect_ips, uid, cid)}`", inline=True)
-            embed.add_field(name="🧹 Clean Spigey", value=f"`{self.config.default_clean_spigey}`", inline=True)
-            embed.add_field(name="🎭 Match Status", value=f"`{self.config.match_status}`", inline=True)
-            
-            embed.set_footer(text=f"Requested by {interaction.user.name}", icon_url=interaction.user.display_avatar.url)
-            
-            await interaction.response.send_message(embed=embed, ephemeral=_ephemeral)
+            debug_info = f"""```ini
+[Debug Info for {self.client.user}]
+Is Admin = {str(uid) in self.config.admin_ids}
+Prefix = {self.config.get_prefix(gid)}
+Message Log = {self.config.get_guild_config(gid, "message-log", self.config.default_message_log, uid, cid)}
+Attachment Log = {self.config.get_attachment_log_setting(gid, uid, cid)}
+Prevent Deleting = {self.config.get_guild_config(gid, "prevent-deleting", self.config.default_prevent_deleting, uid, cid)}
+Prevent Editing = {self.config.get_guild_config(gid, "prevent-editing", self.config.default_prevent_editing, uid, cid)}
+Allow Swears = {self.config.get_guild_config(gid, "allow-swears", self.config.default_allow_swears, uid, cid)}
+Allow Slurs = {self.config.get_guild_config(gid, "allow-slurs", self.config.default_allow_slurs, uid, cid)}
+Detect IPs = {self.config.get_guild_config(gid, "detect-ips", self.config.default_detect_ips, uid, cid)}
+Clean Spigey Data = {self.config.default_clean_spigey}
+Match Status = {self.config.match_status}
+```"""
+            await interaction.response.send_message(debug_info, ephemeral=_ephemeral)
 
         @self.tree.command(name="pconfigdebug", description="[Private] [ADMIN] Show debug configuration info")
         @self.app_commands.allowed_installs(guilds=True, users=True)
@@ -1273,3 +1320,205 @@ class Bot:
             try:
                 with open(self.notes_file, "r", encoding="utf-8") as f: self.notes_data = json.load(f)
             except Exception as e:
+                print(f"[{self.data_dir.name}] Error loading notes: {e}")
+                self.notes_data = {"public": {}, "private": {}}
+        else: self.notes_data = {"public": {}, "private": {}}
+
+    def save_notes(self):
+        try:
+            with open(self.notes_file, "w", encoding="utf-8") as f: json.dump(self.notes_data, f, indent=2, ensure_ascii=False)
+        except Exception as e: print(f"[{self.data_dir.name}] Error saving notes: {e}")
+
+    def load_user_tokens(self) -> Dict:
+        if not self.user_tokens_file.exists(): return {}
+        try:
+            with open(self.user_tokens_file, "r", encoding="utf-8") as f: return json.load(f)
+        except (json.JSONDecodeError, IOError): return {}
+
+    def save_user_tokens(self, tokens: Dict):
+        try:
+            with open(self.user_tokens_file, "w", encoding="utf-8") as f: json.dump(tokens, f, indent=4)
+        except IOError as e: print(f"[Token Storage] Error saving user tokens: {e}")
+
+    def censor_text(self, text: str, guild_id: Optional[int] = None) -> str:
+        if not text or not isinstance(text, str): return text or ""
+        allow_swears = self.config.get_guild_config(guild_id, "allow-swears", self.config.default_allow_swears)
+        allow_slurs = self.config.get_guild_config(guild_id, "allow-slurs", self.config.default_allow_slurs)
+        if not allow_slurs:
+            for slur in SLUR_WORDS: text = re.compile(re.escape(slur), re.IGNORECASE).sub("█" * len(slur), text)
+        if not allow_swears:
+            for swear in SWEAR_WORDS: text = re.compile(re.escape(swear), re.IGNORECASE).sub("*" * len(swear), text)
+        return text
+
+    async def bot_send(self, channel, content=None, files=None):
+        censored_content = self.censor_text(content, channel.guild.id if hasattr(channel, "guild") and channel.guild else None) if content else ""
+        try:
+            if not censored_content and not files: return None
+            if not censored_content: return await channel.send(files=files, suppress_embeds=True)
+            sent_message = None
+            for i, chunk in enumerate(split_message(censored_content)):
+                msg_files = files if i == 0 else None
+                sent = await channel.send(content=chunk, files=msg_files, suppress_embeds=True)
+                if i == 0: sent_message = sent
+            return sent_message
+        except Exception as e:
+            if "Forbidden" in type(e).__name__: print(f"[{self.client.user}] Missing permissions in channel {channel.id}")
+            else: print(f"[{self.client.user}] Error sending message: {e}")
+        return None
+
+    async def cleanup_forward_cache(self):
+        await self.client.wait_until_ready()
+        while not self.client.is_closed():
+            await asyncio.sleep(3600)
+            cutoff = datetime.now() - timedelta(hours=24)
+            expired = [k for k, v in self.forward_cache.items() if v["timestamp"] < cutoff]
+            for k in expired: del self.forward_cache[k]
+            if expired: print(f"[{self.client.user}] Cleaned {len(expired)} old forward cache entries.")
+
+    async def cleanup_message_cache(self):
+        await self.client.wait_until_ready()
+        while not self.client.is_closed():
+            await asyncio.sleep(600)
+            now = datetime.now()
+            cutoff = now - timedelta(minutes=10)
+            msg_expired = [k for k, v in self.message_cache.items() if v["timestamp"] < cutoff]
+            for k in msg_expired: del self.message_cache[k]
+            if msg_expired: print(f"[{self.client.user}] Cleaned {len(msg_expired)} old message cache entries.")
+            
+            edit_expired = [k for k, v in self.edit_history.items() if now - datetime.fromisoformat(v.get("timestamp", now.isoformat())) > timedelta(minutes=10)]
+            for k in edit_expired: del self.edit_history[k]
+            if edit_expired: print(f"[{self.client.user}] Cleaned {len(edit_expired)} old edit history entries.")
+
+    async def handle_command(self, message, command_name: str, args: list):
+        if not self.check_authorization(message.author.id):
+            if self.oauth_handler:
+                await self.bot_send(message.channel, self.oauth_handler.get_authorization_message(message.author.mention))
+            return
+        
+        try:
+            if command_name in self.user_commands:
+                await self.user_commands[command_name](message, args)
+            elif command_name in self.admin_commands and str(message.author.id) in self.config.admin_ids:
+                await self.admin_commands[command_name](message, args)
+        except Exception as e:
+            print(f"[{self.client.user}] Error in command '{command_name}': {e}")
+            import traceback; traceback.print_exc()
+
+    async def on_ready(self):
+        print(f"Logged in as {self.client.user} (ID: {self.client.user.id}) [Type: {self.token_type}]")
+        if self.token_type == "bot" and self.tree:
+            try:
+                print(f"[{self.client.user}] Syncing slash commands...")
+                synced = await self.tree.sync()
+                print(f"[{self.client.user}] Synced {len(synced)} slash command(s)")
+            except Exception as e: print(f"[{self.client.user}] Failed to sync slash commands: {e}")
+        
+        status_map = {"online": self.discord.Status.online, "invisible": self.discord.Status.invisible, "idle": self.discord.Status.idle, "dnd": self.discord.Status.dnd}
+        status = status_map.get(self.config.discord_status_str.lower(), self.discord.Status.online)
+        try:
+            await self.client.change_presence(status=status)
+            print(f"[{self.client.user}] Status set to {status}")
+        except Exception as e:
+            if "MessageToDict" in str(e) and "including_default_value_fields" in str(e):
+                print(f"[{self.client.user}] Skipping status set (harmless protobuf issue)")
+            else:
+                print(f"[{self.client.user}] Error setting status: {e}")
+
+        self.client.loop.create_task(self.cleanup_forward_cache())
+        self.client.loop.create_task(self.cleanup_message_cache())
+
+    async def on_presence_update(self, before, after): pass
+
+    async def on_message(self, message):
+        if message.author.id == self.client.user.id: return
+        if message.author.bot:
+            if str(message.author.id) == ASTEROIDE_BOT_ID and self.config.get_guild_config(message.guild.id if message.guild else None, "detect-ips", self.config.default_detect_ips):
+                await self.handle_asteroide_response(message)
+            return
+
+        if message.guild:
+            self.message_cache[message.id] = {"content": message.content, "timestamp": datetime.now()}
+            await asyncio.gather(
+                self.logging_handler.log_guild_message(message, self.config.get_guild_config(message.guild.id, "message-log", self.config.default_message_log, message.author.id, message.channel.id)),
+                self.logging_handler.log_guild_attachments(message, self.config.get_attachment_log_setting(message.guild.id, message.author.id, message.channel.id)),
+                return_exceptions=True
+            )
+        else: await self.logging_handler.log_dm(message)
+
+        await self._handle_sync_message(message)
+
+        # Only process text commands for selfbots (user tokens)
+        if self.token_type != "user":
+            return
+        
+        gid = message.guild.id if message.guild else None
+        if not self.config.get_guild_config(gid, "allow-commands", self.config.default_allow_commands, message.author.id, message.channel.id): return
+
+        prefix = self.config.get_prefix(gid)
+        if not message.content.startswith(prefix): return
+        
+        parts = message.content[len(prefix):].split()
+        if not parts: return
+        await self.handle_command(message, parts[0].lower(), parts[1:])
+
+    async def handle_asteroide_response(self, message):
+        try:
+            if not re.search(r"\S+ has \d+ alts:", message.content): return
+            if parsed := self.alts_handler.parse_alts_response(message.content): self.alts_handler.store_alts_data(parsed)
+        except Exception as e: print(f"[{self.client.user}] Error handling Asteroide response: {e}")
+
+    async def on_message_edit(self, before, after):
+        if after.author.id == self.client.user.id or not after.guild or after.author.bot: return
+        if not self.config.get_guild_config(after.guild.id, "prevent-editing", self.config.default_prevent_editing, after.author.id, after.channel.id): return
+
+        original = self.message_cache.get(after.id, {}).get("content", before.content)
+        new = after.content or ""
+        if original == new: return
+
+        if after.id not in self.edit_history: self.edit_history[after.id] = {"bot_msg": None, "all_edits": [], "original": original, "timestamp": datetime.now().isoformat()}
+        self.edit_history[after.id]["all_edits"].append(new)
+        
+        if not ((abs(len(new) - len(original)) >= 3 or calculate_edit_percentage(original, new) >= 20) and not is_likely_typo(original, new)): return
+
+        try:
+            history = self.edit_history[after.id]
+            edit_lines = [f"**Original:** {original or '*empty*'}"] + [f"**Edited {i+1}:** {e or '*empty*'}" for i, e in enumerate(history['all_edits'][:-1])] + [f"**Now:** {new or '*empty*'}" ]
+            edit_info = f"**Edited by <@{after.author.id}>**\n" + "\n".join(edit_lines[0:1] + edit_lines[-1:] if len(edit_lines) <= 2 else edit_lines)
+
+            if history["bot_msg"]: await history["bot_msg"].edit(content=edit_info)
+            else:
+                bot_msg = await self.bot_send(after.channel, content=edit_info)
+                if bot_msg: history["bot_msg"] = bot_msg
+        except Exception as e: print(f"[{self.client.user}] Error in on_message_edit: {e}")
+
+    async def on_message_delete(self, message):
+        gid = message.guild.id if message.guild else None
+        if gid is not None and not self.config.get_guild_config(gid, "prevent-deleting", self.config.default_prevent_deleting, message.author.id, message.channel.id): return
+
+        original = self.message_cache.get(message.id, {}).get("content", message.content)
+        final = message.content
+        
+        content_display = f"`{(final or original or '[Empty Message]').replace('`', '`')}`"
+        if original and final and original != final:
+            content_display = f"**Original:** `{original.replace('`', '`')}`\n**Final:** `{final.replace('`', '`')}`"
+
+        attachments = "\n\n**Attachments:**\n" + "\n".join([f"<{att.url}>" for att in message.attachments]) if message.attachments else ""
+        if not original and not final and not attachments: return
+
+        try: await self.bot_send(message.channel, f"{content_display}\ndeleted by <@{message.author.id}>{attachments}")
+        except Exception as e: print(f"[{self.client.user}] Error in on_message_delete: {e}")
+        finally:
+            if message.id in self.message_cache: del self.message_cache[message.id]
+            if message.id in self.edit_history: del self.edit_history[message.id]
+
+    async def _handle_sync_message(self, message):
+        if not self.config.sync_channel_id or (message.guild and str(message.channel.id) == self.config.sync_channel_id): return
+        
+        is_dm = not message.guild
+        is_ping = message.guild and self.client.user in message.mentions
+        is_reply = message.reference and message.reference.resolved and message.reference.resolved.author == self.client.user
+        is_keyword = bool(re.search(r"liforra", message.content, re.IGNORECASE))
+        if not (is_dm or is_ping or is_reply or is_keyword): return
+
+        try: target_channel = self.client.get_channel(int(self.config.sync_channel_id))
+        except (ValueError, TypeError): return print(f"[{self.client.user}] SYNC ERROR: Invalid sync-channel ID.")
