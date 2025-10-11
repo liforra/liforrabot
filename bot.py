@@ -970,7 +970,7 @@ class Bot:
         @self.tree.command(name="alts", description="[ADMIN] Look up a user's known alts and IPs")
         @self.app_commands.describe(
             username="The username to look up",
-            _ip="Show full IP addresses (default: False, shows country only)"
+            _ip="Show full IP addresses (default: False, shows location only)"
         )
         @self.app_commands.allowed_installs(guilds=True, users=True)
         @self.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
@@ -1040,7 +1040,7 @@ class Bot:
                             inline=True
                         )
                 
-                # Add IP information
+                # Add IP/Location information
                 if ips:
                     if _ip and page_num < ip_pages:
                         # Show full IP information with pagination
@@ -1058,7 +1058,9 @@ class Bot:
                         )
                     elif not _ip and page_num == 0:
                         # Show only most common country and VPN status (first page only)
+                        # Prioritize non-US IPs if available
                         country_counts = {}
+                        us_country_counts = {}
                         has_vpn = False
                         
                         for ip in ips:
@@ -1073,16 +1075,25 @@ class Bot:
                                     continue
                                 
                                 country = geo.get("country")
+                                country_code = geo.get("countryCode", "")
                                 if country:
-                                    country_code = geo.get("countryCode", "")
                                     flag = COUNTRY_FLAGS.get(country_code, "🌐")
                                     country_key = (flag, country, country_code)
-                                    country_counts[country_key] = country_counts.get(country_key, 0) + 1
+                                    
+                                    # Separate US and non-US IPs
+                                    if country_code == "US":
+                                        us_country_counts[country_key] = us_country_counts.get(country_key, 0) + 1
+                                    else:
+                                        country_counts[country_key] = country_counts.get(country_key, 0) + 1
                         
-                        # Find most common country
+                        # Find most common country (prefer non-US)
                         most_common_country = None
                         if country_counts:
+                            # Non-US countries available, use the most common one
                             most_common_country = max(country_counts.items(), key=lambda x: x[1])
+                        elif us_country_counts:
+                            # Only US IPs available
+                            most_common_country = max(us_country_counts.items(), key=lambda x: x[1])
                         
                         # Build the display
                         location_info = []
@@ -1095,13 +1106,13 @@ class Bot:
                         
                         if location_info:
                             embed.add_field(
-                                name=f"🌍 Location ({len(ips)} total IPs)",
+                                name=f"🌍 Location",
                                 value="\n".join(location_info),
                                 inline=False
                             )
                         else:
                             embed.add_field(
-                                name=f"🌍 Location ({len(ips)} total IPs)",
+                                name=f"🌍 Location",
                                 value="🌐 **Unknown**",
                                 inline=False
                             )
@@ -1121,7 +1132,7 @@ class Bot:
         @self.tree.command(name="palts", description="[Private] [ADMIN] Look up a user's known alts and IPs")
         @self.app_commands.describe(
             username="The username to look up",
-            _ip="Show full IP addresses (default: False, shows country only)"
+            _ip="Show full IP addresses (default: False, shows location only)"
         )
         @self.app_commands.allowed_installs(guilds=True, users=True)
         @self.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
@@ -1175,7 +1186,7 @@ class Bot:
                 embed.add_field(
                     name="⚙️ Admin Commands",
                     value=(
-                        "`/alts <username> [_ip]` - Look up player alts and IPs\n"
+                        "`/alts <username> [_ip]` - Look up player alts and location\n"
                         "`/ipdbrefresh` - Refresh all IP data\n"
                         "`/reloadconfig` - Reload all config files\n"
                         "`/configget <path>` - Get a config value\n"
