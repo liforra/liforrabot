@@ -6,6 +6,7 @@ import asyncio
 import re
 from typing import List
 from utils.helpers import format_alt_name, format_alts_grid, is_valid_ip, is_valid_ipv6
+from utils.constants import COUNTRY_FLAGS
 
 
 class UserCommands:
@@ -242,7 +243,6 @@ class UserCommands:
 
     async def command_ip(self, message: discord.Message, args: List[str]):
         """IP information and database management."""
-        from utils.constants import COUNTRY_FLAGS
 
         p = self.bot.config.get_prefix(message.guild.id if message.guild else None)
 
@@ -309,6 +309,8 @@ class UserCommands:
             if ip_data.get("hosting"):
                 output.append(f"**VPS/Hosting:** Yes")
 
+            output.append("\n*liforra.de | Liforras Utility bot | Powered by ip-api.com*")
+
             await self.bot.bot_send(message.channel, content="\n".join(output))
 
         elif subcommand == "db":
@@ -354,6 +356,8 @@ class UserCommands:
                     f"🌍 **Unique Countries:** {len(countries)}",
                     f"🔒 **VPN/Proxy IPs:** {vpn_count}",
                     f"☁️ **VPS/Hosting IPs:** {hosting_count}",
+                    "",
+                    "*liforra.de | Liforras Utility bot*"
                 ]
 
                 await self.bot.bot_send(message.channel, content="\n".join(output))
@@ -405,6 +409,8 @@ class UserCommands:
                 output.append(
                     f"**Last Updated:** {geo.get('last_updated', 'N/A')[:10]}"
                 )
+                
+                output.append("\n*liforra.de | Liforras Utility bot*")
 
                 await self.bot.bot_send(message.channel, content="\n".join(output))
 
@@ -428,6 +434,8 @@ class UserCommands:
 
                 if total_pages > page:
                     output.append(f"\nUse `{p}ip db list {page + 1}` for next page.")
+                
+                output.append("\n*liforra.de | Liforras Utility bot*")
 
                 await self.bot.bot_send(message.channel, content="\n".join(output))
 
@@ -465,6 +473,8 @@ class UserCommands:
                 output = [f"**Search Results for '{search_term}':**"] + results[:25]
                 if len(results) > 25:
                     output.append(f"\n*Showing 25 of {len(results)} results*")
+                
+                output.append("\n*liforra.de | Liforras Utility bot*")
 
                 await self.bot.bot_send(message.channel, content="\n".join(output))
 
@@ -503,7 +513,7 @@ class UserCommands:
 
                 await self.bot.bot_send(
                     message.channel,
-                    content=f"✅ Refreshed {len(geo_results)} IP records",
+                    content=f"✅ Refreshed {len(geo_results)} IP records\n\n*liforra.de | Liforras Utility bot | Powered by ip-api.com*",
                 )
 
             else:
@@ -556,6 +566,7 @@ class UserCommands:
                     f"",
                     f"**🔗 Links:**",
                     f"• NameMC: https://namemc.com/profile/{player['username']}",
+                    f"• LabyMod: https://laby.net/@{player['username']}",
                     f"• Avatar: {player['avatar']}",
                     f"• Skin (download): https://crafatar.com/skins/{player['raw_id']}",
                     f"• Full Body (with overlay): https://mc-heads.net/body/{player['raw_id']}/right",
@@ -572,7 +583,9 @@ class UserCommands:
                 if cached_at:
                     from datetime import datetime
                     cached_time = datetime.fromtimestamp(cached_at).strftime('%Y-%m-%d %H:%M:%S UTC')
-                    output.append(f"\n*Data cached at {cached_time}*")
+                    output.append(f"\n*liforra.de | Liforras Utility bot | Powered by PlayerDB | Data cached at {cached_time}*")
+                else:
+                    output.append(f"\n*liforra.de | Liforras Utility bot | Powered by PlayerDB*")
                 
                 await self.bot.bot_send(message.channel, content="\n".join(output))
                 
@@ -588,7 +601,7 @@ class UserCommands:
             )
 
     async def command_alts(self, message: discord.Message, args: List[str]):
-        """Alts database lookup (user-facing, read-only)."""
+        """Alts database lookup (user-facing, IPs hidden by default)."""
         p = self.bot.config.get_prefix(message.guild.id if message.guild else None)
         
         if not args:
@@ -607,7 +620,7 @@ class UserCommands:
                     for data in self.bot.alts_handler.alts_data.values()
                 )
             )
-            stats = f"**Alts DB Stats:**\n- Users: {total_users}\n- Unique IPs: {len(all_ips)}\n- Cached IP Geo Data: {len(self.bot.ip_handler.ip_geo_data)}"
+            stats = f"**Alts DB Stats:**\n- Users: {total_users}\n- Unique IPs: {len(all_ips)}\n- Cached IP Geo Data: {len(self.bot.ip_handler.ip_geo_data)}\n\n*liforra.de | Liforras Utility bot*"
             return await self.bot.bot_send(message.channel, content=stats)
 
         elif subcommand == "list":
@@ -638,10 +651,12 @@ class UserCommands:
                 )
             if total_pages > page:
                 output.append(f"\nUse `{p}alts list {page + 1}` for next page.")
+            
+            output.append("\n*liforra.de | Liforras Utility bot*")
             await self.bot.bot_send(message.channel, content="\n".join(output))
 
         else:
-            # Username lookup
+            # Username lookup - IPs hidden for non-admins
             search_term = args[0]
             found_user = None
 
@@ -671,24 +686,73 @@ class UserCommands:
             data = self.bot.alts_handler.alts_data[found_user]
             alts = sorted(list(data.get("alts", set())))
             ips = sorted(list(data.get("ips", set())))
+            
+            # Check if admin
+            is_admin = str(message.author.id) in self.bot.config.admin_ids
+
+            # Calculate most common non-VPN country
+            country_counts = {}
+            has_used_vpn = False
+            
+            for ip in ips:
+                if ip in self.bot.ip_handler.ip_geo_data:
+                    geo = self.bot.ip_handler.ip_geo_data[ip]
+                    
+                    # Check if VPN/Proxy/Hosting
+                    vpn_provider = self.bot.ip_handler.detect_vpn_provider(geo.get("isp", ""), geo.get("org", ""))
+                    is_vpn = vpn_provider or geo.get("proxy") or geo.get("hosting")
+                    
+                    if is_vpn:
+                        has_used_vpn = True
+                    else:
+                        # Count non-VPN countries (discourage USA)
+                        country = geo.get("country")
+                        country_code = geo.get("countryCode")
+                        if country and country_code:
+                            # Reduce USA weight by treating it as 0.3 of a count
+                            weight = 0.3 if country_code == "US" else 1.0
+                            country_counts[country] = country_counts.get(country, 0) + weight
+            
+            # Find most common country
+            likely_location = None
+            if country_counts:
+                likely_location = max(country_counts, key=country_counts.get)
+                # Get flag for the country
+                for ip in ips:
+                    if ip in self.bot.ip_handler.ip_geo_data:
+                        geo = self.bot.ip_handler.ip_geo_data[ip]
+                        if geo.get("country") == likely_location:
+                            likely_location = f"{COUNTRY_FLAGS.get(geo.get('countryCode', ''), '🌐')} {likely_location}"
+                            break
 
             formatted_found_user = format_alt_name(found_user)
             output = [f"**Alts data for {formatted_found_user}:**"]
+            
+            if likely_location:
+                output.append(f"**Likely Location:** {likely_location}")
+            
+            if has_used_vpn:
+                output.append(f"**VPN Usage:** 🔒 Yes")
 
             if alts:
                 formatted_alts = [format_alt_name(alt) for alt in alts]
                 grid_lines = format_alts_grid(formatted_alts, max_per_line=3)
-                output.append(f"**Alts ({len(alts)}):**")
+                output.append(f"\n**Alts ({len(alts)}):**")
                 output.extend(grid_lines)
 
+            # Show IP count but hide actual IPs for non-admins
             if ips:
-                output.append(f"\n**IPs ({len(ips)}):**")
-                for ip in ips:
-                    output.append(f"→ {self.bot.ip_handler.format_ip_with_geo(ip)}")
+                if is_admin:
+                    output.append(f"\n**IPs ({len(ips)}):**")
+                    for ip in ips:
+                        output.append(f"→ {self.bot.ip_handler.format_ip_with_geo(ip)}")
+                else:
+                    output.append(f"\n**IPs:** {len(ips)} on record *(use `/alts {search_term} _ip:True` to view - admin only)*")
 
             output.append(
                 f"\n*First seen: {data.get('first_seen', 'N/A')[:10]} | Last updated: {data.get('last_updated', 'N/A')[:10]}*"
             )
+            output.append("\n*liforra.de | Liforras Utility bot*")
             await self.bot.bot_send(message.channel, content="\n".join(output))
 
     async def command_help(self, message: discord.Message, args: List[str]):
@@ -705,13 +769,16 @@ class UserCommands:
                     f"`{cmd}`" for cmd in self.bot.admin_commands.keys()
                 )
                 help_text += f"\n\n**Admin Commands:** {admin_cmds}"
+            help_text += "\n\n*liforra.de | Liforras Utility bot*"
             await self.bot.bot_send(message.channel, content=help_text)
         else:
             cmd_name = args[0].lower()
             if cmd_name in self.bot.command_help_texts:
+                help_content = self.bot.command_help_texts[cmd_name].format(p=p)
+                help_content += "\n\n*liforra.de | Liforras Utility bot*"
                 await self.bot.bot_send(
                     message.channel,
-                    content=self.bot.command_help_texts[cmd_name].format(p=p),
+                    content=help_content,
                 )
             else:
                 await self.bot.bot_send(

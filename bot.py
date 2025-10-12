@@ -7,6 +7,7 @@ import logging
 from pathlib import Path
 from typing import Dict, Optional, Union, List
 from datetime import datetime, timedelta
+from collections import defaultdict
 
 from config.config_manager import ConfigManager
 from handlers.alts_handler import AltsHandler
@@ -150,6 +151,9 @@ class Bot:
         self.forward_cache = {}
         self.message_cache = {}
         self.edit_history = {}
+        
+        # Rate limiting
+        self.command_rate_limits = defaultdict(lambda: {"alts": [], "ip": []})
 
         # Command mappings (for selfbots only)
         self.user_commands = {
@@ -206,6 +210,25 @@ class Bot:
         
         return self.oauth_handler.is_user_authorized(str(user_id))
 
+    def check_rate_limit(self, user_id: int, command: str, limit: int, window: int = 60) -> tuple[bool, int]:
+        """
+        Checks if user has exceeded rate limit.
+        Returns (is_allowed, seconds_until_reset).
+        """
+        now = datetime.now()
+        user_limits = self.command_rate_limits[user_id][command]
+        
+        # Remove old entries outside the window
+        user_limits[:] = [timestamp for timestamp in user_limits if now - timestamp < timedelta(seconds=window)]
+        
+        if len(user_limits) >= limit:
+            oldest = user_limits[0]
+            wait_time = int((oldest + timedelta(seconds=window) - now).total_seconds())
+            return False, wait_time
+        
+        user_limits.append(now)
+        return True, 0
+
     def register_slash_commands(self):
         """Registers slash commands for bot tokens."""
         if not self.tree or not self.oauth_handler:
@@ -248,7 +271,7 @@ class Bot:
                         name="Donald Trump",
                         icon_url="https://upload.wikimedia.org/wikipedia/commons/thumb/5/56/Donald_Trump_official_portrait.jpg/480px-Donald_Trump_official_portrait.jpg"
                     )
-                    embed.set_footer(text="What Does Trump Think API")
+                    embed.set_footer(text="liforra.de | Liforras Utility bot | Powered by What Does Trump Think API")
                     
                     await interaction.followup.send(embed=embed, ephemeral=_ephemeral)
             except Exception as e:
@@ -328,6 +351,8 @@ class Bot:
             if not embed.fields:
                 embed.description = "No websites configured."
             
+            embed.set_footer(text="liforra.de | Liforras Utility bot")
+            
             await interaction.followup.send(embed=embed, ephemeral=_ephemeral)
 
         @self.tree.command(name="pwebsites", description="[Private] Check status of configured websites")
@@ -373,7 +398,7 @@ class Bot:
                 )
             
             online_count = sum(1 for _, _, is_online in results if is_online)
-            embed.set_footer(text=f"{online_count}/{len(results)} devices responding")
+            embed.set_footer(text=f"liforra.de | Liforras Utility bot | {online_count}/{len(results)} devices responding")
             
             await interaction.followup.send(embed=embed, ephemeral=_ephemeral)
 
@@ -392,6 +417,15 @@ class Bot:
             if not self.check_authorization(interaction.user.id):
                 await interaction.response.send_message(
                     self.oauth_handler.get_authorization_message(interaction.user.mention),
+                    ephemeral=True
+                )
+                return
+            
+            # Rate limiting: 10 requests per minute
+            is_allowed, wait_time = self.check_rate_limit(interaction.user.id, "ip", limit=10, window=60)
+            if not is_allowed:
+                await interaction.response.send_message(
+                    f"⏱️ Rate limit exceeded. Please wait {wait_time} seconds before using this command again.",
                     ephemeral=True
                 )
                 return
@@ -486,7 +520,7 @@ class Bot:
                     inline=False
                 )
             
-            embed.set_footer(text="Powered by ip-api.com")
+            embed.set_footer(text="liforra.de | Liforras Utility bot | Powered by ip-api.com")
             
             await interaction.followup.send(embed=embed, ephemeral=_ephemeral)
 
@@ -581,7 +615,7 @@ class Bot:
                     inline=False
                 )
 
-            embed.set_footer(text=f"Last updated: {geo.get('last_updated', 'N/A')[:10]}")
+            embed.set_footer(text=f"liforra.de | Liforras Utility bot | Last updated: {geo.get('last_updated', 'N/A')[:10]}")
 
             await interaction.response.send_message(embed=embed, ephemeral=_ephemeral)
 
@@ -638,7 +672,7 @@ class Bot:
                     inline=False
                 )
                 
-                embed.set_footer(text=f"Page {page_num}/{total_pages} • {len(ips)} total IPs")
+                embed.set_footer(text=f"liforra.de | Liforras Utility bot | Page {page_num}/{total_pages} • {len(ips)} total IPs")
                 embeds.append(embed)
             
             if len(embeds) == 1:
@@ -721,7 +755,7 @@ class Bot:
                     inline=False
                 )
 
-                embed.set_footer(text=f"Page {page_num}/{total_pages}")
+                embed.set_footer(text=f"liforra.de | Liforras Utility bot | Page {page_num}/{total_pages}")
                 embeds.append(embed)
 
             if len(embeds) == 1:
@@ -797,7 +831,7 @@ class Bot:
                 inline=True
             )
 
-            embed.set_footer(text="Database snapshot")
+            embed.set_footer(text="liforra.de | Liforras Utility bot")
 
             await interaction.response.send_message(embed=embed, ephemeral=_ephemeral)
 
@@ -849,6 +883,8 @@ class Bot:
                 color=0x2ECC71,
                 timestamp=datetime.now()
             )
+            
+            embed.set_footer(text="liforra.de | Liforras Utility bot | Powered by ip-api.com")
 
             await interaction.followup.send(embed=embed, ephemeral=_ephemeral)
 
@@ -946,11 +982,14 @@ class Bot:
                     if cached_at:
                         cached_time = datetime.fromtimestamp(cached_at).strftime('%Y-%m-%d %H:%M:%S UTC')
                         embed.set_footer(
-                            text=f"Data cached at {cached_time}",
+                            text=f"liforra.de | Liforras Utility bot | Powered by PlayerDB | Data cached at {cached_time}",
                             icon_url=player['avatar']
                         )
                     else:
-                        embed.set_footer(text="Powered by PlayerDB", icon_url=player['avatar'])
+                        embed.set_footer(
+                            text="liforra.de | Liforras Utility bot | Powered by PlayerDB",
+                            icon_url=player['avatar']
+                        )
                     
                     await interaction.followup.send(embed=embed, ephemeral=_ephemeral)
                     
@@ -966,17 +1005,43 @@ class Bot:
         async def pplayerinfo_slash(interaction: self.discord.Interaction, username: str):
             await playerinfo_slash(interaction, username, _ephemeral=True)
 
-        # Alts command with pagination
-        @self.tree.command(name="alts", description="[ADMIN] Look up a user's known alts and IPs")
-        @self.app_commands.describe(username="The username to look up")
+        # Alts command with pagination and IP hiding
+        @self.tree.command(name="alts", description="Look up a user's known alts")
+        @self.app_commands.describe(
+            username="The username to look up",
+            _ip="[ADMIN] Show IP addresses (default: False)"
+        )
         @self.app_commands.allowed_installs(guilds=True, users=True)
         @self.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
-        async def alts_slash(interaction: self.discord.Interaction, username: str, _ephemeral: bool = False):
-            await interaction.response.defer(ephemeral=_ephemeral)
-            
-            if not str(interaction.user.id) in self.config.admin_ids:
-                await interaction.followup.send("❌ This command is admin-only.", ephemeral=True)
+        async def alts_slash(interaction: self.discord.Interaction, username: str, _ip: bool = False, _ephemeral: bool = False):
+            if not self.check_authorization(interaction.user.id):
+                await interaction.response.send_message(
+                    self.oauth_handler.get_authorization_message(interaction.user.mention),
+                    ephemeral=True
+                )
                 return
+            
+            # Rate limiting: 2 requests per minute
+            is_allowed, wait_time = self.check_rate_limit(interaction.user.id, "alts", limit=2, window=60)
+            if not is_allowed:
+                await interaction.response.send_message(
+                    f"⏱️ Rate limit exceeded. Please wait {wait_time} seconds before using this command again.",
+                    ephemeral=True
+                )
+                return
+            
+            # Check if user is admin for IP viewing
+            is_admin = str(interaction.user.id) in self.config.admin_ids
+            show_ips = _ip and is_admin
+            
+            if _ip and not is_admin:
+                await interaction.response.send_message(
+                    "❌ Only administrators can view IP addresses.",
+                    ephemeral=True
+                )
+                return
+            
+            await interaction.response.defer(ephemeral=_ephemeral)
             
             search_term = username
             found_user = None
@@ -996,14 +1061,49 @@ class Bot:
             alts = sorted(list(data.get("alts", set())))
             ips = sorted(list(data.get("ips", set())))
             
+            # Calculate most common non-VPN country
+            country_counts = {}
+            has_used_vpn = False
+            
+            for ip in ips:
+                if ip in self.ip_handler.ip_geo_data:
+                    geo = self.ip_handler.ip_geo_data[ip]
+                    
+                    # Check if VPN/Proxy/Hosting
+                    vpn_provider = self.ip_handler.detect_vpn_provider(geo.get("isp", ""), geo.get("org", ""))
+                    is_vpn = vpn_provider or geo.get("proxy") or geo.get("hosting")
+                    
+                    if is_vpn:
+                        has_used_vpn = True
+                    else:
+                        # Count non-VPN countries (discourage USA)
+                        country = geo.get("country")
+                        country_code = geo.get("countryCode")
+                        if country and country_code:
+                            # Reduce USA weight by treating it as 0.3 of a count
+                            weight = 0.3 if country_code == "US" else 1.0
+                            country_counts[country] = country_counts.get(country, 0) + weight
+            
+            # Find most common country
+            likely_location = None
+            if country_counts:
+                likely_location = max(country_counts, key=country_counts.get)
+                # Get flag for the country
+                for ip in ips:
+                    if ip in self.ip_handler.ip_geo_data:
+                        geo = self.ip_handler.ip_geo_data[ip]
+                        if geo.get("country") == likely_location:
+                            likely_location = f"{COUNTRY_FLAGS.get(geo.get('countryCode', ''), '🌐')} {likely_location}"
+                            break
+            
             # Create embeds
             embeds = []
             per_page_alts = 30
-            per_page_ips = 15
+            per_page_ips = 15 if show_ips else 0
             
-            # Calculate how many pages we need
+            # Calculate pages
             alt_pages = (len(alts) + per_page_alts - 1) // per_page_alts if alts else 0
-            ip_pages = (len(ips) + per_page_ips - 1) // per_page_ips if ips else 0
+            ip_pages = (len(ips) + per_page_ips - 1) // per_page_ips if (ips and show_ips) else 0
             total_pages = max(alt_pages, ip_pages, 1)
             
             for page_num in range(total_pages):
@@ -1016,11 +1116,22 @@ class Bot:
                 
                 # Add metadata on first page
                 if page_num == 0:
-                    embed.description = (
-                        f"**Player:** {format_alt_name(found_user)}\n"
-                        f"**First Seen:** {data.get('first_seen', 'N/A')[:10]}\n"
+                    description_parts = [
+                        f"**Player:** {format_alt_name(found_user)}",
+                    ]
+                    
+                    if likely_location:
+                        description_parts.append(f"**Likely Location:** {likely_location}")
+                    
+                    if has_used_vpn:
+                        description_parts.append(f"**VPN Usage:** 🔒 Yes")
+                    
+                    description_parts.extend([
+                        f"**First Seen:** {data.get('first_seen', 'N/A')[:10]}",
                         f"**Last Updated:** {data.get('last_updated', 'N/A')[:10]}"
-                    )
+                    ])
+                    
+                    embed.description = "\n".join(description_parts)
                 
                 # Add alts for this page
                 if alts and page_num < alt_pages:
@@ -1037,8 +1148,8 @@ class Bot:
                             inline=True
                         )
                 
-                # Add IPs for this page
-                if ips and page_num < ip_pages:
+                # Add IPs only if show_ips is True
+                if ips and show_ips and page_num < ip_pages:
                     start_ip = page_num * per_page_ips
                     page_ips = ips[start_ip : start_ip + per_page_ips]
                     
@@ -1051,8 +1162,14 @@ class Bot:
                         value="\n".join(ip_list),
                         inline=False
                     )
+                elif ips and not show_ips and page_num == 0:
+                    embed.add_field(
+                        name=f"🌐 IP Addresses",
+                        value=f"*{len(ips)} IP(s) on record. Use `/alts {username} _ip:True` to view (admin only)*",
+                        inline=False
+                    )
                 
-                embed.set_footer(text=f"Page {page_num + 1}/{total_pages}")
+                embed.set_footer(text=f"liforra.de | Liforras Utility bot | Page {page_num + 1}/{total_pages}")
                 embeds.append(embed)
             
             if len(embeds) == 1:
@@ -1061,12 +1178,15 @@ class Bot:
                 pagination = PaginationView(embeds, self.discord)
                 await interaction.followup.send(embed=embeds[0], view=pagination.view, ephemeral=_ephemeral)
 
-        @self.tree.command(name="palts", description="[Private] [ADMIN] Look up a user's known alts and IPs")
-        @self.app_commands.describe(username="The username to look up")
+        @self.tree.command(name="palts", description="[Private] Look up a user's known alts")
+        @self.app_commands.describe(
+            username="The username to look up",
+            _ip="[ADMIN] Show IP addresses (default: False)"
+        )
         @self.app_commands.allowed_installs(guilds=True, users=True)
         @self.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
-        async def palts_slash(interaction: self.discord.Interaction, username: str):
-            await alts_slash(interaction, username, _ephemeral=True)
+        async def palts_slash(interaction: self.discord.Interaction, username: str, _ip: bool = False):
+            await alts_slash(interaction, username, _ip, _ephemeral=True)
 
         # Help command
         @self.tree.command(name="help", description="Show available commands")
@@ -1103,6 +1223,15 @@ class Bot:
                 ),
                 inline=False
             )
+            
+            embed.add_field(
+                name="👥 Alt Lookup",
+                value=(
+                    "`/alts <username>` - Look up player alts and location\n"
+                    "*Note: IP addresses hidden by default. Rate limited to 2/min*"
+                ),
+                inline=False
+            )
 
             if self.token_type == "bot":
                 embed.add_field(
@@ -1115,7 +1244,7 @@ class Bot:
                 embed.add_field(
                     name="⚙️ Admin Commands",
                     value=(
-                        "`/alts <username>` - Look up player alts and IPs\n"
+                        "`/alts <username> _ip:True` - View IPs (admin only)\n"
                         "`/altsrefresh` - Refresh alts database from remote source\n"
                         "`/ipdbrefresh` - Refresh all IP data\n"
                         "`/reloadconfig` - Reload all config files\n"
@@ -1132,7 +1261,7 @@ class Bot:
                 inline=False
             )
 
-            embed.set_footer(text="Use buttons to navigate multi-page results")
+            embed.set_footer(text="liforra.de | Liforras Utility bot")
 
             await interaction.response.send_message(embed=embed, ephemeral=_ephemeral)
 
@@ -1167,6 +1296,8 @@ class Bot:
                     color=0x2ECC71,
                     timestamp=datetime.now()
                 )
+                
+                embed.set_footer(text="liforra.de | Liforras Utility bot")
                 
                 await interaction.followup.send(embed=embed, ephemeral=_ephemeral)
             except Exception as e:
@@ -1319,6 +1450,8 @@ Match Status = {self.config.match_status}
                 timestamp=datetime.now()
             )
             
+            embed.set_footer(text="liforra.de | Liforras Utility bot")
+            
             status_msg = await interaction.followup.send(embed=embed, ephemeral=_ephemeral)
             
             success = await self.alts_handler.refresh_alts_data(
@@ -1351,7 +1484,7 @@ Match Status = {self.config.match_status}
                     inline=False
                 )
                 
-                embed.set_footer(text="Data successfully updated")
+                embed.set_footer(text="liforra.de | Liforras Utility bot")
                 
                 await status_msg.edit(embed=embed)
             else:
@@ -1362,7 +1495,7 @@ Match Status = {self.config.match_status}
                     timestamp=datetime.now()
                 )
                 
-                embed.set_footer(text="Check bot logs for error details")
+                embed.set_footer(text="liforra.de | Liforras Utility bot")
                 
                 await status_msg.edit(embed=embed)
 
