@@ -1005,7 +1005,7 @@ class Bot:
         async def pplayerinfo_slash(interaction: self.discord.Interaction, username: str):
             await playerinfo_slash(interaction, username, _ephemeral=True)
 
-        # Alts command with pagination and IP hiding
+        # Alts command with pagination, IP hiding, and bug fixes for large accounts
         @self.tree.command(name="alts", description="Look up a user's known alts")
         @self.app_commands.describe(
             username="The username to look up",
@@ -1059,7 +1059,8 @@ class Bot:
             alts = sorted(list(data.get("alts", set())))
             ips = sorted(list(data.get("ips", set())))
             
-            country_counts = {}
+            # Optimized location calculation
+            country_counts = {}  # { "country_name": {"count": float, "code": "str"} }
             for ip in ips:
                 if ip in self.ip_handler.ip_geo_data:
                     geo = self.ip_handler.ip_geo_data[ip]
@@ -1069,27 +1070,74 @@ class Bot:
                         country = geo.get("country")
                         country_code = geo.get("countryCode")
                         if country and country_code:
+                            if country not in country_counts:
+                                country_counts[country] = {"count": 0, "code": country_code}
                             weight = 0.3 if country_code == "US" else 1.0
-                            country_counts[country] = country_counts.get(country, 0) + weight
+                            country_counts[country]["count"] += weight
             
             likely_location_str = "N/A"
             if country_counts:
-                most_likely_country = max(country_counts, key=country_counts.get)
-                for ip in ips:
-                    if ip in self.ip_handler.ip_geo_data:
-                        geo = self.ip_handler.ip_geo_data[ip]
-                        if geo.get("country") == most_likely_country:
-                            flag = COUNTRY_FLAGS.get(geo.get('countryCode', ''), '🌐')
-                            likely_location_str = f"{flag} {most_likely_country}"
-                            break
+                most_likely_country = max(country_counts, key=lambda c: country_counts[c]["count"])
+                country_data = country_counts[most_likely_country]
+                flag = COUNTRY_FLAGS.get(country_data['code'], '🌐')
+                likely_location_str = f"{flag} {most_likely_country}"
+
+            # --- Start of Bug Fix: Field Generation with Character Limits ---
             
-            per_page_alts = 30
-            per_page_ips = 15 if show_ips else 0
-            alt_pages = (len(alts) + per_page_alts - 1) // per_page_alts if alts else 0
-            ip_pages = (len(ips) + per_page_ips - 1) // per_page_ips if (ips and show_ips) else 0
-            total_pages = max(alt_pages, ip_pages, 1)
+            def generate_fields(title: str, items: List[str], max_items_per_field: int) -> List[Dict]:
+                """Splits a list of items into multiple embed fields if they exceed char limits."""
+                if not items:
+                    return []
+                
+                fields = []
+                current_field_value = ""
+                item_count_in_field = 0
+                
+                for item in items:
+                    # Check if adding the next item would exceed Discord's limit OR our item count limit
+                    if (len(current_field_value) + len(item) + 1 > 1024) or \
+                       (item_count_in_field >= max_items_per_field):
+                        fields.append({
+                            "name": title if not fields else "\u200b",
+                            "value": current_field_value,
+                            "inline": False
+                        })
+                        current_field_value = ""
+                        item_count_in_field = 0
+
+                    current_field_value += f"{item}\n"
+                    item_count_in_field += 1
+                
+                if current_field_value: # Add the last remaining field
+                    fields.append({
+                        "name": title if not fields else "\u200b",
+                        "value": current_field_value,
+                        "inline": False
+                    })
+                return fields
+
+            alt_fields = generate_fields(
+                f"Known Alts ({len(alts)} total)", 
+                [format_alt_name(alt) for alt in alts],
+                max_items_per_field=20
+            )
+
+            ip_fields = []
+            if show_ips:
+                ip_fields = generate_fields(
+                    f"🌐 Known IP Addresses ({len(ips)} total)",
+                    [self.ip_handler.format_ip_with_geo(ip) for ip in ips],
+                    max_items_per_field=15
+                )
+
+            all_fields = alt_fields + ip_fields
             
+            # --- End of Bug Fix ---
+            
+            FIELDS_PER_PAGE = 5
+            total_pages = (len(all_fields) + FIELDS_PER_PAGE - 1) // FIELDS_PER_PAGE if all_fields else 1
             embeds = []
+
             for page_num in range(total_pages):
                 embed = self.discord.Embed(
                     title="👥 Alt Accounts",
@@ -1102,29 +1150,41 @@ class Bot:
                     )
                 )
                 
-                if alts:
-                    start_alt = page_num * per_page_alts
-                    page_alts = alts[start_alt : start_alt + per_page_alts]
-                    embed.add_field(
-                        name=f"Known Alts ({len(alts)} total)",
-                        value="\n".join([format_alt_name(alt) for alt in page_alts]) or "None",
-                        inline=False
-                    )
-
-                embed.add_field(name="🌍 Location", value=likely_location_str, inline=False)
+                # Add location only on the first page
+                if page_num == 0:
+                     embed.add_field(name="🌍 Location", value=likely_location_str, inline=False)
                 
-                if ips and show_ips and page_num < ip_pages:
-                    start_ip = page_num * per_page_ips
-                    page_ips = ips[start_ip : start_ip + per_page_ips]
-                    ip_list = [self.ip_handler.format_ip_with_geo(ip) for ip in page_ips]
-                    embed.add_field(
-                        name=f"🌐 Known IP Addresses ({len(ips)} total)",
-                        value="\n".join(ip_list),
-                        inline=False
-                    )
+                start_index = page_num * FIELDS_PER_PAGE
+                end_index = start_index + FIELDS_PER_PAGE
+                page_fields = all_fields[start_index:end_index]
+                
+                for field in page_fields:
+                    embed.add_field(name=field["name"], value=field["value"], inline=field["inline"])
+
+                # Handle case where there are no alts and IPs are hidden
+                if not alts and not show_ips and page_num == 0:
+                    embed.add_field(name="Known Alts", value="None found", inline=False)
                 
                 embed.set_footer(text=f"liforra.de | Liforras Utility bot | Page {page_num + 1}/{total_pages}")
                 embeds.append(embed)
+            
+            # Final fallback for a user with no data at all
+            if not embeds:
+                embed = self.discord.Embed(
+                    title="👥 Alt Accounts",
+                    color=0xE74C3C,
+                    timestamp=datetime.now(),
+                    description=(
+                        f"**Player:** {format_alt_name(found_user)}\n"
+                        f"**First Seen:** {data.get('first_seen', 'N/A')[:10]}\n"
+                        f"**Last Updated:** {data.get('last_updated', 'N/A')[:10]}"
+                    )
+                )
+                embed.add_field(name="🌍 Location", value=likely_location_str, inline=False)
+                embed.add_field(name="Known Alts", value="None found", inline=False)
+                embed.set_footer(text="liforra.de | Liforras Utility bot | Page 1/1")
+                embeds.append(embed)
+
 
             if len(embeds) == 1:
                 await interaction.followup.send(embed=embeds[0], ephemeral=_ephemeral)
