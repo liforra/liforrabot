@@ -1021,16 +1021,14 @@ class Bot:
                 )
                 return
             
-            # Rate limiting: 2 requests per minute
             is_allowed, wait_time = self.check_rate_limit(interaction.user.id, "alts", limit=2, window=60)
             if not is_allowed:
                 await interaction.response.send_message(
-                    f"⏱️ Rate limit exceeded. Please wait {wait_time} seconds before using this command again.",
+                    f"⏱️ Rate limit exceeded. Please wait {wait_time} seconds.",
                     ephemeral=True
                 )
                 return
             
-            # Check if user is admin for IP viewing
             is_admin = str(interaction.user.id) in self.config.admin_ids
             show_ips = _ip and is_admin
             
@@ -1061,117 +1059,73 @@ class Bot:
             alts = sorted(list(data.get("alts", set())))
             ips = sorted(list(data.get("ips", set())))
             
-            # Calculate most common non-VPN country
             country_counts = {}
-            has_used_vpn = False
-            
             for ip in ips:
                 if ip in self.ip_handler.ip_geo_data:
                     geo = self.ip_handler.ip_geo_data[ip]
-                    
-                    # Check if VPN/Proxy/Hosting
                     vpn_provider = self.ip_handler.detect_vpn_provider(geo.get("isp", ""), geo.get("org", ""))
                     is_vpn = vpn_provider or geo.get("proxy") or geo.get("hosting")
-                    
-                    if is_vpn:
-                        has_used_vpn = True
-                    else:
-                        # Count non-VPN countries (discourage USA)
+                    if not is_vpn:
                         country = geo.get("country")
                         country_code = geo.get("countryCode")
                         if country and country_code:
-                            # Reduce USA weight by treating it as 0.3 of a count
                             weight = 0.3 if country_code == "US" else 1.0
                             country_counts[country] = country_counts.get(country, 0) + weight
             
-            # Find most common country
-            likely_location = None
+            likely_location_str = "N/A"
             if country_counts:
-                likely_location = max(country_counts, key=country_counts.get)
-                # Get flag for the country
+                most_likely_country = max(country_counts, key=country_counts.get)
                 for ip in ips:
                     if ip in self.ip_handler.ip_geo_data:
                         geo = self.ip_handler.ip_geo_data[ip]
-                        if geo.get("country") == likely_location:
-                            likely_location = f"{COUNTRY_FLAGS.get(geo.get('countryCode', ''), '🌐')} {likely_location}"
+                        if geo.get("country") == most_likely_country:
+                            flag = COUNTRY_FLAGS.get(geo.get('countryCode', ''), '🌐')
+                            likely_location_str = f"{flag} {most_likely_country}"
                             break
             
-            # Create embeds
-            embeds = []
             per_page_alts = 30
             per_page_ips = 15 if show_ips else 0
-            
-            # Calculate pages
             alt_pages = (len(alts) + per_page_alts - 1) // per_page_alts if alts else 0
             ip_pages = (len(ips) + per_page_ips - 1) // per_page_ips if (ips and show_ips) else 0
             total_pages = max(alt_pages, ip_pages, 1)
             
+            embeds = []
             for page_num in range(total_pages):
                 embed = self.discord.Embed(
-                    title=f"👥 Alt Accounts",
+                    title="👥 Alt Accounts",
                     color=0xE74C3C,
                     timestamp=datetime.now(),
-                    url=f"https://namemc.com/search?q={found_user.lstrip('.')}"
+                    description=(
+                        f"**Player:** {format_alt_name(found_user)}\n"
+                        f"**First Seen:** {data.get('first_seen', 'N/A')[:10]}\n"
+                        f"**Last Updated:** {data.get('last_updated', 'N/A')[:10]}"
+                    )
                 )
                 
-                # Add metadata on first page
-                if page_num == 0:
-                    description_parts = [
-                        f"**Player:** {format_alt_name(found_user)}",
-                    ]
-                    
-                    if likely_location:
-                        description_parts.append(f"**Likely Location:** {likely_location}")
-                    
-                    if has_used_vpn:
-                        description_parts.append(f"**VPN Usage:** 🔒 Yes")
-                    
-                    description_parts.extend([
-                        f"**First Seen:** {data.get('first_seen', 'N/A')[:10]}",
-                        f"**Last Updated:** {data.get('last_updated', 'N/A')[:10]}"
-                    ])
-                    
-                    embed.description = "\n".join(description_parts)
-                
-                # Add alts for this page
-                if alts and page_num < alt_pages:
+                if alts:
                     start_alt = page_num * per_page_alts
                     page_alts = alts[start_alt : start_alt + per_page_alts]
-                    formatted_alts = [format_alt_name(alt) for alt in page_alts]
-                    
-                    # Split into columns of 10
-                    alt_columns = [formatted_alts[i:i+10] for i in range(0, len(formatted_alts), 10)]
-                    for i, column in enumerate(alt_columns):
-                        embed.add_field(
-                            name=f"Known Alts ({len(alts)} total)" if i == 0 else "\u200b",
-                            value="\n".join(column),
-                            inline=True
-                        )
+                    embed.add_field(
+                        name=f"Known Alts ({len(alts)} total)",
+                        value="\n".join([format_alt_name(alt) for alt in page_alts]) or "None",
+                        inline=False
+                    )
+
+                embed.add_field(name="🌍 Location", value=likely_location_str, inline=False)
                 
-                # Add IPs only if show_ips is True
                 if ips and show_ips and page_num < ip_pages:
                     start_ip = page_num * per_page_ips
                     page_ips = ips[start_ip : start_ip + per_page_ips]
-                    
-                    ip_list = []
-                    for ip in page_ips:
-                        ip_list.append(self.ip_handler.format_ip_with_geo(ip))
-                    
+                    ip_list = [self.ip_handler.format_ip_with_geo(ip) for ip in page_ips]
                     embed.add_field(
                         name=f"🌐 Known IP Addresses ({len(ips)} total)",
                         value="\n".join(ip_list),
                         inline=False
                     )
-                elif ips and not show_ips and page_num == 0:
-                    embed.add_field(
-                        name=f"🌐 IP Addresses",
-                        value=f"*{len(ips)} IP(s) on record. Use `/alts {username} _ip:True` to view (admin only)*",
-                        inline=False
-                    )
                 
                 embed.set_footer(text=f"liforra.de | Liforras Utility bot | Page {page_num + 1}/{total_pages}")
                 embeds.append(embed)
-            
+
             if len(embeds) == 1:
                 await interaction.followup.send(embed=embeds[0], ephemeral=_ephemeral)
             else:
@@ -1228,7 +1182,7 @@ class Bot:
                 name="👥 Alt Lookup",
                 value=(
                     "`/alts <username>` - Look up player alts and location\n"
-                    "*Note: IP addresses hidden by default. Rate limited to 2/min*"
+                    "*Note: Rate limited to 2/min*"
                 ),
                 inline=False
             )
