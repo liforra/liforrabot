@@ -113,11 +113,6 @@ class Bot:
         self.log_file = self.data_dir / "bot.log"
         self.user_tokens_file = self.data_dir / "user-tokens.json"
 
-        # Rate limiting for /alts command
-        self.alts_rate_limit = {}  # {user_id: [timestamp1, timestamp2, ...]}
-        self.alts_rate_limit_window = 60  # seconds
-        self.alts_rate_limit_max = 2  # requests per window
-
         # Initialize Discord client based on token type
         if token_type == "bot":
             import discord
@@ -210,73 +205,6 @@ class Bot:
             return True
         
         return self.oauth_handler.is_user_authorized(str(user_id))
-
-    def check_alts_rate_limit(self, user_id: int) -> tuple[bool, Optional[int]]:
-        """
-        Checks if a user has exceeded the rate limit for /alts command.
-        Returns (is_allowed, seconds_until_reset)
-        Admins bypass rate limiting.
-        """
-        # Admins bypass rate limit
-        if str(user_id) in self.config.admin_ids:
-            return (True, None)
-        
-        now = datetime.now()
-        user_id_str = str(user_id)
-        
-        # Clean up old timestamps
-        if user_id_str in self.alts_rate_limit:
-            cutoff = now - timedelta(seconds=self.alts_rate_limit_window)
-            self.alts_rate_limit[user_id_str] = [
-                ts for ts in self.alts_rate_limit[user_id_str]
-                if ts > cutoff
-            ]
-        
-        # Check rate limit
-        if user_id_str not in self.alts_rate_limit:
-            self.alts_rate_limit[user_id_str] = []
-        
-        recent_requests = self.alts_rate_limit[user_id_str]
-        
-        if len(recent_requests) >= self.alts_rate_limit_max:
-            # Calculate time until oldest request expires
-            oldest = min(recent_requests)
-            time_until_reset = self.alts_rate_limit_window - (now - oldest).total_seconds()
-            return (False, int(time_until_reset) + 1)
-        
-        # Add current request
-        self.alts_rate_limit[user_id_str].append(now)
-        return (True, None)
-
-    def is_filtered_isp(self, isp: str, org: str) -> bool:
-        """
-        Checks if an ISP/organization should be filtered out from location detection.
-        Returns True if the IP should be ignored for determining user's real location.
-        """
-        # List of ISPs/organizations to filter
-        filtered_keywords = [
-            "google fiber",
-            "cloudflare",
-            "amazon",
-            "aws",
-            "microsoft",
-            "azure",
-            "digitalocean",
-            "linode",
-            "vultr",
-            "ovh",
-            "hetzner",
-            "datacenter",
-            "data center",
-        ]
-        
-        search_text = f"{isp or ''} {org or ''}".lower()
-        
-        for keyword in filtered_keywords:
-            if keyword in search_text:
-                return True
-        
-        return False
 
     def register_slash_commands(self):
         """Registers slash commands for bot tokens."""
@@ -1038,41 +966,17 @@ class Bot:
         async def pplayerinfo_slash(interaction: self.discord.Interaction, username: str):
             await playerinfo_slash(interaction, username, _ephemeral=True)
 
-        # Alts command with pagination and IP visibility control
-        @self.tree.command(name="alts", description="Look up a user's known alts and location")
-        @self.app_commands.describe(
-            username="The username to look up",
-            _ip="[ADMIN ONLY] Show full IP addresses"
-        )
+        # Alts command with pagination
+        @self.tree.command(name="alts", description="[ADMIN] Look up a user's known alts and IPs")
+        @self.app_commands.describe(username="The username to look up")
         @self.app_commands.allowed_installs(guilds=True, users=True)
         @self.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
-        async def alts_slash(interaction: self.discord.Interaction, username: str, _ip: bool = False, _ephemeral: bool = False):
-            # Check authorization
-            if not self.check_authorization(interaction.user.id):
-                await interaction.response.send_message(
-                    self.oauth_handler.get_authorization_message(interaction.user.mention),
-                    ephemeral=True
-                )
-                return
-            
-            # Check if _ip=True requires admin
-            if _ip and str(interaction.user.id) not in self.config.admin_ids:
-                await interaction.response.send_message(
-                    "❌ The `_ip` parameter requires admin permissions.",
-                    ephemeral=True
-                )
-                return
-            
-            # Check rate limit
-            is_allowed, wait_time = self.check_alts_rate_limit(interaction.user.id)
-            if not is_allowed:
-                await interaction.response.send_message(
-                    f"⏱️ Rate limit exceeded. Please wait {wait_time} seconds before using this command again.",
-                    ephemeral=True
-                )
-                return
-            
+        async def alts_slash(interaction: self.discord.Interaction, username: str, _ephemeral: bool = False):
             await interaction.response.defer(ephemeral=_ephemeral)
+            
+            if not str(interaction.user.id) in self.config.admin_ids:
+                await interaction.followup.send("❌ This command is admin-only.", ephemeral=True)
+                return
             
             search_term = username
             found_user = None
@@ -1099,7 +1003,7 @@ class Bot:
             
             # Calculate how many pages we need
             alt_pages = (len(alts) + per_page_alts - 1) // per_page_alts if alts else 0
-            ip_pages = (len(ips) + per_page_ips - 1) // per_page_ips if (ips and _ip) else 0
+            ip_pages = (len(ips) + per_page_ips - 1) // per_page_ips if ips else 0
             total_pages = max(alt_pages, ip_pages, 1)
             
             for page_num in range(total_pages):
@@ -1133,90 +1037,22 @@ class Bot:
                             inline=True
                         )
                 
-                # Add IP information
-                if ips:
-                    if _ip and page_num < ip_pages:
-                        # Show full IP information with pagination
-                        start_ip = page_num * per_page_ips
-                        page_ips = ips[start_ip : start_ip + per_page_ips]
-                        
-                        ip_list = []
-                        for ip in page_ips:
-                            ip_list.append(self.ip_handler.format_ip_with_geo(ip))
-                        
-                        embed.add_field(
-                            name=f"🌐 Known IP Addresses ({len(ips)} total)",
-                            value="\n".join(ip_list),
-                            inline=False
-                        )
-                    elif not _ip and page_num == 0:
-                        # Show only most common country and VPN status (first page only)
-                        # Prioritize non-US countries
-                        country_counts_us = {}
-                        country_counts_non_us = {}
-                        has_vpn = False
-                        
-                        for ip in ips:
-                            geo = self.ip_handler.ip_geo_data.get(ip)
-                            if geo:
-                                # Check if proxy/VPN or hosting
-                                vpn_provider = self.ip_handler.detect_vpn_provider(
-                                    geo.get("isp", ""), geo.get("org", "")
-                                )
-                                if vpn_provider or geo.get("proxy") or geo.get("hosting"):
-                                    has_vpn = True
-                                    continue
-                                
-                                # Filter out specific ISPs like Google Fiber
-                                if self.is_filtered_isp(geo.get("isp", ""), geo.get("org", "")):
-                                    continue
-                                
-                                country = geo.get("country")
-                                country_code = geo.get("countryCode", "")
-                                
-                                if country:
-                                    flag = COUNTRY_FLAGS.get(country_code, "🌐")
-                                    country_key = (flag, country, country_code)
-                                    
-                                    # Separate US and non-US
-                                    if country_code == "US":
-                                        country_counts_us[country_key] = country_counts_us.get(country_key, 0) + 1
-                                    else:
-                                        country_counts_non_us[country_key] = country_counts_non_us.get(country_key, 0) + 1
-                        
-                        # Find most common country, prioritizing non-US
-                        most_common_country = None
-                        if country_counts_non_us:
-                            most_common_country = max(country_counts_non_us.items(), key=lambda x: x[1])
-                        elif country_counts_us:
-                            most_common_country = max(country_counts_us.items(), key=lambda x: x[1])
-                        
-                        # Build the display
-                        location_info = []
-                        if most_common_country:
-                            flag, country, country_code = most_common_country[0]
-                            location_info.append(f"{flag} **{country}**")
-                        
-                        if has_vpn:
-                            location_info.append("🔒 **Used VPN/Proxy**")
-                        
-                        if location_info:
-                            embed.add_field(
-                                name="🌍 Location",
-                                value="\n".join(location_info),
-                                inline=False
-                            )
-                        else:
-                            embed.add_field(
-                                name="🌍 Location",
-                                value="🌐 **Unknown**",
-                                inline=False
-                            )
+                # Add IPs for this page
+                if ips and page_num < ip_pages:
+                    start_ip = page_num * per_page_ips
+                    page_ips = ips[start_ip : start_ip + per_page_ips]
+                    
+                    ip_list = []
+                    for ip in page_ips:
+                        ip_list.append(self.ip_handler.format_ip_with_geo(ip))
+                    
+                    embed.add_field(
+                        name=f"🌐 Known IP Addresses ({len(ips)} total)",
+                        value="\n".join(ip_list),
+                        inline=False
+                    )
                 
-                footer_text = f"Page {page_num + 1}/{total_pages}"
-                if not _ip and ips and str(interaction.user.id) in self.config.admin_ids:
-                    footer_text += " • Use _ip: True to see full IP addresses"
-                embed.set_footer(text=footer_text)
+                embed.set_footer(text=f"Page {page_num + 1}/{total_pages}")
                 embeds.append(embed)
             
             if len(embeds) == 1:
@@ -1225,15 +1061,12 @@ class Bot:
                 pagination = PaginationView(embeds, self.discord)
                 await interaction.followup.send(embed=embeds[0], view=pagination.view, ephemeral=_ephemeral)
 
-        @self.tree.command(name="palts", description="[Private] Look up a user's known alts and location")
-        @self.app_commands.describe(
-            username="The username to look up",
-            _ip="[ADMIN ONLY] Show full IP addresses"
-        )
+        @self.tree.command(name="palts", description="[Private] [ADMIN] Look up a user's known alts and IPs")
+        @self.app_commands.describe(username="The username to look up")
         @self.app_commands.allowed_installs(guilds=True, users=True)
         @self.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
-        async def palts_slash(interaction: self.discord.Interaction, username: str, _ip: bool = False):
-            await alts_slash(interaction, username, _ip, _ephemeral=True)
+        async def palts_slash(interaction: self.discord.Interaction, username: str):
+            await alts_slash(interaction, username, _ephemeral=True)
 
         # Help command
         @self.tree.command(name="help", description="Show available commands")
@@ -1254,7 +1087,6 @@ class Bot:
                     "`/websites` - Check website status\n"
                     "`/pings` - Ping configured devices\n"
                     "`/playerinfo <username>` - Get Minecraft player info\n"
-                    "`/alts <username>` - Look up player alts (rate limited)\n"
                     "`/help` - Show this help message"
                 ),
                 inline=False
@@ -1283,7 +1115,8 @@ class Bot:
                 embed.add_field(
                     name="⚙️ Admin Commands",
                     value=(
-                        "`/alts <username> _ip:True` - Show full IP addresses\n"
+                        "`/alts <username>` - Look up player alts and IPs\n"
+                        "`/altsrefresh` - Refresh alts database from remote source\n"
                         "`/ipdbrefresh` - Refresh all IP data\n"
                         "`/reloadconfig` - Reload all config files\n"
                         "`/configget <path>` - Get a config value\n"
@@ -1294,11 +1127,8 @@ class Bot:
                 )
             
             embed.add_field(
-                name="💡 Tips",
-                value=(
-                    "• Prefix any command with `p` (e.g., `/pip`, `/palts`) to make the response private\n"
-                    "• `/alts` is rate limited to 2 requests per minute for non-admins"
-                ),
+                name="💡 Tip",
+                value="Prefix any command with `p` (e.g., `/pip`, `/palts`) to make the response private (ephemeral)",
                 inline=False
             )
 
@@ -1464,6 +1294,84 @@ Match Status = {self.config.match_status}
         async def pconfigdebug_slash(interaction: self.discord.Interaction):
             await configdebug_slash(interaction, _ephemeral=True)
 
+        # Alts Refresh command (admin only)
+        @self.tree.command(name="altsrefresh", description="[ADMIN] Manually refresh alts database from remote source")
+        @self.app_commands.allowed_installs(guilds=True, users=True)
+        @self.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+        async def altsrefresh_slash(interaction: self.discord.Interaction, _ephemeral: bool = False):
+            if not str(interaction.user.id) in self.config.admin_ids:
+                await interaction.response.send_message("❌ This command is admin-only.", ephemeral=True)
+                return
+            
+            await interaction.response.defer(ephemeral=_ephemeral)
+            
+            if not self.config.alts_refresh_url:
+                await interaction.followup.send(
+                    "❌ Alts refresh URL not configured in `config.toml`",
+                    ephemeral=_ephemeral
+                )
+                return
+            
+            embed = self.discord.Embed(
+                title="⚙️ Refreshing Alts Database",
+                description="Fetching data from remote source...",
+                color=0xF39C12,
+                timestamp=datetime.now()
+            )
+            
+            status_msg = await interaction.followup.send(embed=embed, ephemeral=_ephemeral)
+            
+            success = await self.alts_handler.refresh_alts_data(
+                self.config.alts_refresh_url, self.ip_handler
+            )
+            
+            if success:
+                total_users = len(self.alts_handler.alts_data)
+                all_ips = set().union(
+                    *(
+                        data.get("ips", set())
+                        for data in self.alts_handler.alts_data.values()
+                    )
+                )
+                
+                embed = self.discord.Embed(
+                    title="✅ Alts Database Refreshed",
+                    description="Successfully fetched and merged remote data",
+                    color=0x2ECC71,
+                    timestamp=datetime.now()
+                )
+                
+                embed.add_field(
+                    name="📊 Database Stats",
+                    value=(
+                        f"**Total Users:** {total_users}\n"
+                        f"**Unique IPs:** {len(all_ips)}\n"
+                        f"**Cached IP Geo Data:** {len(self.ip_handler.ip_geo_data)}"
+                    ),
+                    inline=False
+                )
+                
+                embed.set_footer(text="Data successfully updated")
+                
+                await status_msg.edit(embed=embed)
+            else:
+                embed = self.discord.Embed(
+                    title="❌ Refresh Failed",
+                    description="Could not fetch data from remote source. Check logs for details.",
+                    color=0xE74C3C,
+                    timestamp=datetime.now()
+                )
+                
+                embed.set_footer(text="Check bot logs for error details")
+                
+                await status_msg.edit(embed=embed)
+
+        @self.tree.command(name="paltsrefresh", description="[Private] [ADMIN] Manually refresh alts database from remote source")
+        @self.app_commands.allowed_installs(guilds=True, users=True)
+        @self.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+        async def paltsrefresh_slash(interaction: self.discord.Interaction):
+            await altsrefresh_slash(interaction, _ephemeral=True)
+
     async def run(self):
         """Starts the bot."""
         print(f"Starting bot instance ({self.token_type}) in directory: {self.data_dir}")
@@ -1560,6 +1468,39 @@ Match Status = {self.config.match_status}
             for k in edit_expired: del self.edit_history[k]
             if edit_expired: print(f"[{self.client.user}] Cleaned {len(edit_expired)} old edit history entries.")
 
+    async def auto_refresh_alts(self):
+        """Automatically refreshes alts database every minute."""
+        await self.client.wait_until_ready()
+        
+        # Wait 60 seconds before first refresh to allow bot to fully initialize
+        await asyncio.sleep(60)
+        
+        while not self.client.is_closed():
+            if self.config.alts_refresh_url:
+                print(f"[{self.client.user}] Auto-refreshing alts database...")
+                try:
+                    success = await self.alts_handler.refresh_alts_data(
+                        self.config.alts_refresh_url, self.ip_handler
+                    )
+                    if success:
+                        total_users = len(self.alts_handler.alts_data)
+                        all_ips = set().union(
+                            *(
+                                data.get("ips", set())
+                                for data in self.alts_handler.alts_data.values()
+                            )
+                        )
+                        print(f"[{self.client.user}] Alts refresh complete: {total_users} users, {len(all_ips)} IPs")
+                    else:
+                        print(f"[{self.client.user}] Alts refresh failed. Check logs.")
+                except Exception as e:
+                    print(f"[{self.client.user}] Error during auto-refresh: {e}")
+            else:
+                print(f"[{self.client.user}] Skipping alts auto-refresh (URL not configured)")
+            
+            # Wait 60 seconds before next refresh
+            await asyncio.sleep(60)
+
     async def handle_command(self, message, command_name: str, args: list):
         if not self.check_authorization(message.author.id):
             if self.oauth_handler:
@@ -1595,8 +1536,11 @@ Match Status = {self.config.match_status}
             else:
                 print(f"[{self.client.user}] Error setting status: {e}")
 
+        # Start background tasks
         self.client.loop.create_task(self.cleanup_forward_cache())
         self.client.loop.create_task(self.cleanup_message_cache())
+        self.client.loop.create_task(self.auto_refresh_alts())
+        print(f"[{self.client.user}] Started background tasks (cache cleanup, alts auto-refresh)")
 
     async def on_presence_update(self, before, after): pass
 
