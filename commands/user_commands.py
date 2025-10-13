@@ -528,77 +528,87 @@ class UserCommands:
                 content=f"❌ Unknown subcommand. Use `{p}help ip` for usage",
             )
 
-    async def command_playerinfo(self, message: discord.Message, args: List[str]):
-        """Gets detailed Minecraft player information."""
-        if not args:
-            p = self.bot.config.get_prefix(message.guild.id if message.guild else None)
-            return await self.bot.bot_send(
-                message.channel,
-                content=f"Usage: `{p}playerinfo <username>`"
+async def command_namehistory(self, message: discord.Message, args: List[str]):
+    """Gets Minecraft name history from the API."""
+    p = self.bot.config.get_prefix(message.guild.id if message.guild else None)
+    
+    if not args:
+        return await self.bot.bot_send(
+            message.channel,
+            content=f"Usage: `{p}namehistory <username>`"
+        )
+    
+    username = args[0]
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"https://liforra.de/api/namehistory?username={username}",
+                timeout=15
             )
-        
-        username = args[0]
-        
-        try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(
-                    f"https://playerdb.co/api/player/minecraft/{username}",
-                    headers={"User-Agent": "https://liforra.de"},
-                    timeout=10
+            response.raise_for_status()
+            data = response.json()
+            
+            if not data.get("history"):
+                return await self.bot.bot_send(
+                    message.channel,
+                    content=f"❌ No name history found for `{username}`"
                 )
-                response.raise_for_status()
-                data = response.json()
+            
+            output = [f"📜 **Name History for {username}**"]
+            
+            if data.get("uuid"):
+                output.append(f"**UUID:** `{data['uuid']}`")
+            
+            if data.get("last_seen_at"):
+                last_seen = data["last_seen_at"][:19].replace("T", " ")
+                output.append(f"**Last Seen:** {last_seen} UTC")
+            
+            # Sort by id to ensure correct chronological order
+            history = sorted(data["history"], key=lambda x: x.get("id", 0))
+            
+            output.append(f"\n**Name Changes ({len(history)} recorded):**")
+            
+            for idx, entry in enumerate(history, 1):
+                name = entry['name']
                 
-                if data.get("code") != "player.found":
-                    return await self.bot.bot_send(
-                        message.channel,
-                        content=f"❌ Player `{username}` not found"
-                    )
-                
-                player = data["data"]["player"]
-                
-                # For selfbots, send as formatted text (no embeds)
-                output = [
-                    f"🎮 **Player Info: {player['username']}**",
-                    f"",
-                    f"**🆔 UUID:** `{player['id']}`",
-                    f"**🔢 Raw UUID:** `{player['raw_id']}`",
-                    f"",
-                    f"**🔗 Links:**",
-                    f"• NameMC: https://namemc.com/profile/{player['username']}",
-                    f"• LabyMod: https://laby.net/@{player['username']}",
-                    f"• Avatar: {player['avatar']}",
-                    f"• Skin (download): https://crafatar.com/skins/{player['raw_id']}",
-                    f"• Full Body (with overlay): https://mc-heads.net/body/{player['raw_id']}/right",
-                ]
-                
-                if player.get('name_history') and len(player['name_history']) > 0:
-                    history_list = player['name_history'][:10]
-                    history = " → ".join([f"`{name}`" for name in history_list])
-                    if len(player['name_history']) > 10:
-                        history += f" (+{len(player['name_history']) - 10} more)"
-                    output.append(f"\n**📜 Name History:**\n{history}")
-                
-                cached_at = player['meta'].get('cached_at')
-                if cached_at:
-                    from datetime import datetime
-                    cached_time = datetime.fromtimestamp(cached_at).strftime('%Y-%m-%d %H:%M:%S UTC')
-                    output.append(f"\n*liforra.de | Liforras Utility bot | Powered by PlayerDB | Data cached at {cached_time}*")
+                if entry.get("changed_at") is None:
+                    # No timestamp means it's either original or current
+                    if idx == 1:
+                        label = "Original"
+                    else:
+                        label = "Current"
                 else:
-                    output.append(f"\n*liforra.de | Liforras Utility bot | Powered by PlayerDB*")
+                    # Has timestamp - this is when they changed TO this name
+                    label = entry["changed_at"][:10]
                 
-                await self.bot.bot_send(message.channel, content="\n".join(output))
-                
-        except httpx.HTTPStatusError as e:
+                output.append(f"{idx}. `{name}` - {label}")
+            
+            output.append(f"\n**Profile Links:**")
+            output.append(f"• NameMC: https://namemc.com/profile/{username}")
+            if data.get("uuid"):
+                output.append(f"• LabyMod: https://laby.net/@{data['uuid']}")
+            
+            output.append(f"\n*liforra.de | Liforras Utility bot | Powered by liforra.de Name History API*")
+            
+            await self.bot.bot_send(message.channel, content="\n".join(output))
+            
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 429:
+            await self.bot.bot_send(
+                message.channel,
+                content="⏱️ Rate limit exceeded. Please wait before trying again."
+            )
+        else:
             await self.bot.bot_send(
                 message.channel,
                 content=f"❌ API Error: {e.response.status_code}"
             )
-        except Exception as e:
-            await self.bot.bot_send(
-                message.channel,
-                content=f"❌ Error: {type(e).__name__}"
-            )
+    except Exception as e:
+        await self.bot.bot_send(
+            message.channel,
+            content=f"❌ Error: {type(e).__name__}"
+        )
 
     async def command_namehistory(self, message: discord.Message, args: List[str]):
         """Gets Minecraft name history from the API."""
