@@ -600,6 +600,91 @@ class UserCommands:
                 content=f"❌ Error: {type(e).__name__}"
             )
 
+    async def command_namehistory(self, message: discord.Message, args: List[str]):
+        """Gets Minecraft name history from the API."""
+        p = self.bot.config.get_prefix(message.guild.id if message.guild else None)
+        
+        if not args:
+            return await self.bot.bot_send(
+                message.channel,
+                content=f"Usage: `{p}namehistory <username>`"
+            )
+        
+        username = args[0]
+        
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    f"https://liforra.de/api/namehistory?username={username}",
+                    timeout=15
+                )
+                response.raise_for_status()
+                data = response.json()
+                
+                if not data.get("history"):
+                    return await self.bot.bot_send(
+                        message.channel,
+                        content=f"❌ No name history found for `{username}`"
+                    )
+                
+                # Format the output
+                output = [f"📜 **Name History for {username}**"]
+                
+                if data.get("uuid"):
+                    output.append(f"**UUID:** `{data['uuid']}`")
+                
+                if data.get("last_seen_at"):
+                    last_seen = data["last_seen_at"][:19].replace("T", " ")
+                    output.append(f"**Last Seen:** {last_seen} UTC")
+                
+                output.append(f"\n**Name Changes ({len(data['history'])}):**")
+                
+                # Sort history by changed_at, putting entries with no changed_at at the end
+                history = sorted(
+                    data["history"], 
+                    key=lambda x: x.get("changed_at") or "9999-12-31T23:59:59"
+                )
+                
+                for i, entry in enumerate(history):
+                    name = entry.get("name", "Unknown")
+                    
+                    if entry.get("changed_at"):
+                        # Format timestamp
+                        timestamp = entry["changed_at"][:19].replace("T", " ")
+                        output.append(f"{i+1}. `{name}` - {timestamp} UTC")
+                    else:
+                        # Original name or current name without timestamp
+                        if i == len(history) - 1:
+                            output.append(f"{i+1}. `{name}` - Current")
+                        else:
+                            output.append(f"{i+1}. `{name}` - Original")
+                
+                output.append(f"\n**Profile Links:**")
+                output.append(f"• NameMC: https://namemc.com/profile/{username}")
+                if data.get("uuid"):
+                    output.append(f"• LabyMod: https://laby.net/@{data['uuid']}")
+                
+                output.append(f"\n*liforra.de | Liforras Utility bot | Powered by liforra.de Name History API*")
+                
+                await self.bot.bot_send(message.channel, content="\n".join(output))
+                
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 429:
+                await self.bot.bot_send(
+                    message.channel,
+                    content="⏱️ Rate limit exceeded. Please wait before trying again."
+                )
+            else:
+                await self.bot.bot_send(
+                    message.channel,
+                    content=f"❌ API Error: {e.response.status_code}"
+                )
+        except Exception as e:
+            await self.bot.bot_send(
+                message.channel,
+                content=f"❌ Error: {type(e).__name__}"
+            )
+
     async def command_alts(self, message: discord.Message, args: List[str]):
         """Alts database lookup (user-facing, IPs hidden by default)."""
         p = self.bot.config.get_prefix(message.guild.id if message.guild else None)

@@ -164,6 +164,7 @@ class Bot:
             "help": self.user_commands_handler.command_help,
             "ip": self.user_commands_handler.command_ip,
             "playerinfo": self.user_commands_handler.command_playerinfo,
+            "namehistory": self.user_commands_handler.command_namehistory,
             "alts": self.user_commands_handler.command_alts,
         }
         self.admin_commands = {
@@ -184,6 +185,7 @@ class Bot:
             "note": "Usage: `{p}note <create|get|list|delete> <public|private> [name] [content]`\nManages personal (private) or server-wide (public) notes.",
             "reload-config": "Usage: `{p}reload-config`\nReloads `config.toml`, `notes.json`, and `alts_data.json` from disk.",
             "resend": "Usage: `{p}resend <number>`\nDeletes the command and resends the last `X` messages sent by the bot in the current channel.",
+            "namehistory": "Usage: `{p}namehistory <username>`\nGets the complete name change history for a Minecraft player, including timestamps and profile links.",
             "ip": "Usage: `{p}ip <info|db> [args]`\n- `info <ip>`: Fetches live information about an IP address (supports IPv4 and IPv6).\n- `db info <ip>`: Shows cached IP information from the database.\n- `db list [page]`: Lists all IPs in the database.\n- `db search <term>`: Searches IPs by country, city, or ISP.\n- `db refresh`: Updates all cached IP information.\n- `db stats`: Shows database statistics.",
         }
 
@@ -1005,6 +1007,128 @@ class Bot:
         async def pplayerinfo_slash(interaction: self.discord.Interaction, username: str):
             await playerinfo_slash(interaction, username, _ephemeral=True)
 
+        # Name History command with embed
+        @self.tree.command(name="namehistory", description="Get complete Minecraft name change history")
+        @self.app_commands.describe(username="The Minecraft username to look up")
+        @self.app_commands.allowed_installs(guilds=True, users=True)
+        @self.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+        async def namehistory_slash(interaction: self.discord.Interaction, username: str, _ephemeral: bool = False):
+            if not self.check_authorization(interaction.user.id):
+                await interaction.response.send_message(
+                    self.oauth_handler.get_authorization_message(interaction.user.mention),
+                    ephemeral=True
+                )
+                return
+            
+            await interaction.response.defer(ephemeral=_ephemeral)
+            
+            try:
+                async with httpx.AsyncClient() as client:
+                    response = await client.get(
+                        f"https://liforra.de/api/namehistory?username={username}",
+                        timeout=15
+                    )
+                    response.raise_for_status()
+                    data = response.json()
+                    
+                    if not data.get("history"):
+                        await interaction.followup.send(
+                            f"❌ No name history found for `{username}`",
+                            ephemeral=_ephemeral
+                        )
+                        return
+                    
+                    embed = self.discord.Embed(
+                        title=f"📜 Name History",
+                        description=f"**Player:** {username}",
+                        color=0x9B59B6,
+                        timestamp=datetime.now(),
+                        url=f"https://namemc.com/profile/{username}"
+                    )
+                    
+                    if data.get("uuid"):
+                        embed.add_field(
+                            name="🆔 UUID",
+                            value=f"`{data['uuid']}`",
+                            inline=False
+                        )
+                    
+                    if data.get("last_seen_at"):
+                        last_seen = data["last_seen_at"][:19].replace("T", " ")
+                        embed.add_field(
+                            name="👀 Last Seen",
+                            value=f"{last_seen} UTC",
+                            inline=True
+                        )
+                    
+                    # Sort history by changed_at
+                    history = sorted(
+                        data["history"], 
+                        key=lambda x: x.get("changed_at") or "9999-12-31T23:59:59"
+                    )
+                    
+                    # Build name changes field
+                    changes_text = []
+                    for i, entry in enumerate(history[:15]):  # Limit to 15 to avoid embed limits
+                        name = entry.get("name", "Unknown")
+                        
+                        if entry.get("changed_at"):
+                            timestamp = entry["changed_at"][:10]  # Just the date
+                            changes_text.append(f"`{i+1}.` **{name}** - {timestamp}")
+                        else:
+                            if i == len(history) - 1:
+                                changes_text.append(f"`{i+1}.` **{name}** - *Current*")
+                            else:
+                                changes_text.append(f"`{i+1}.` **{name}** - *Original*")
+                    
+                    if len(history) > 15:
+                        changes_text.append(f"*... and {len(history) - 15} more names*")
+                    
+                    embed.add_field(
+                        name=f"📝 Name Changes ({len(history)} total)",
+                        value="\n".join(changes_text) if changes_text else "No changes found",
+                        inline=False
+                    )
+                    
+                    # Profile links
+                    links = [f"[NameMC](https://namemc.com/profile/{username})"]
+                    if data.get("uuid"):
+                        links.append(f"[LabyMod](https://laby.net/@{data['uuid']})")
+                    
+                    embed.add_field(
+                        name="🔗 Profile Links",
+                        value=" • ".join(links),
+                        inline=False
+                    )
+                    
+                    embed.set_footer(text="liforra.de | Liforras Utility bot | Powered by liforra.de Name History API")
+                    
+                    await interaction.followup.send(embed=embed, ephemeral=_ephemeral)
+                    
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 429:
+                    await interaction.followup.send(
+                        "⏱️ Rate limit exceeded. Please wait before trying again.",
+                        ephemeral=_ephemeral
+                    )
+                else:
+                    await interaction.followup.send(
+                        f"❌ API Error: {e.response.status_code}",
+                        ephemeral=_ephemeral
+                    )
+            except Exception as e:
+                await interaction.followup.send(
+                    f"❌ Error: {type(e).__name__}",
+                    ephemeral=_ephemeral
+                )
+
+        @self.tree.command(name="pnamehistory", description="[Private] Get complete Minecraft name change history")
+        @self.app_commands.describe(username="The Minecraft username to look up")
+        @self.app_commands.allowed_installs(guilds=True, users=True)
+        @self.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+        async def pnamehistory_slash(interaction: self.discord.Interaction, username: str):
+            await namehistory_slash(interaction, username, _ephemeral=True)
+
         # Alts command with pagination, IP hiding, and bug fixes for large accounts
         @self.tree.command(name="alts", description="Look up a user's known alts")
         @self.app_commands.describe(
@@ -1221,6 +1345,7 @@ class Bot:
                     "`/websites` - Check website status\n"
                     "`/pings` - Ping configured devices\n"
                     "`/playerinfo <username>` - Get Minecraft player info\n"
+                    "`/namehistory <username>` - Get complete name change history\n"
                     "`/help` - Show this help message"
                 ),
                 inline=False
@@ -1588,199 +1713,225 @@ Match Status = {self.config.match_status}
                 if i == 0: sent_message = sent
             return sent_message
         except Exception as e:
-            if "Forbidden" in type(e).__name__: print(f"[{self.client.user}] Missing permissions in channel {channel.id}")
+            if "Forbidden" in type(e).name: print(f"[{self.client.user}] Missing permissions in channel {channel.id}")
             else: print(f"[{self.client.user}] Error sending message: {e}")
-        return None
+            return None
+async def cleanup_forward_cache(self):
+    await self.client.wait_until_ready()
+    while not self.client.is_closed():
+        await asyncio.sleep(3600)
+        cutoff = datetime.now() - timedelta(hours=24)
+        expired = [k for k, v in self.forward_cache.items() if v["timestamp"] < cutoff]
+        for k in expired: del self.forward_cache[k]
+        if expired: print(f"[{self.client.user}] Cleaned {len(expired)} old forward cache entries.")
 
-    async def cleanup_forward_cache(self):
-        await self.client.wait_until_ready()
-        while not self.client.is_closed():
-            await asyncio.sleep(3600)
-            cutoff = datetime.now() - timedelta(hours=24)
-            expired = [k for k, v in self.forward_cache.items() if v["timestamp"] < cutoff]
-            for k in expired: del self.forward_cache[k]
-            if expired: print(f"[{self.client.user}] Cleaned {len(expired)} old forward cache entries.")
-
-    async def cleanup_message_cache(self):
-        await self.client.wait_until_ready()
-        while not self.client.is_closed():
-            await asyncio.sleep(600)
-            now = datetime.now()
-            cutoff = now - timedelta(minutes=10)
-            msg_expired = [k for k, v in self.message_cache.items() if v["timestamp"] < cutoff]
-            for k in msg_expired: del self.message_cache[k]
-            if msg_expired: print(f"[{self.client.user}] Cleaned {len(msg_expired)} old message cache entries.")
-            
-            edit_expired = [k for k, v in self.edit_history.items() if now - datetime.fromisoformat(v.get("timestamp", now.isoformat())) > timedelta(minutes=10)]
-            for k in edit_expired: del self.edit_history[k]
-            if edit_expired: print(f"[{self.client.user}] Cleaned {len(edit_expired)} old edit history entries.")
-
-    async def auto_refresh_alts(self):
-        """Automatically refreshes alts database every minute."""
-        await self.client.wait_until_ready()
+async def cleanup_message_cache(self):
+    await self.client.wait_until_ready()
+    while not self.client.is_closed():
+        await asyncio.sleep(600)
+        now = datetime.now()
+        cutoff = now - timedelta(minutes=10)
+        msg_expired = [k for k, v in self.message_cache.items() if v["timestamp"] < cutoff]
+        for k in msg_expired: del self.message_cache[k]
+        if msg_expired: print(f"[{self.client.user}] Cleaned {len(msg_expired)} old message cache entries.")
         
-        # Wait 60 seconds before first refresh to allow bot to fully initialize
-        await asyncio.sleep(60)
-        
-        while not self.client.is_closed():
-            if self.config.alts_refresh_url:
-                print(f"[{self.client.user}] Auto-refreshing alts database...")
-                try:
-                    success = await self.alts_handler.refresh_alts_data(
-                        self.config.alts_refresh_url, self.ip_handler
-                    )
-                    if success:
-                        total_users = len(self.alts_handler.alts_data)
-                        all_ips = set().union(
-                            *(
-                                data.get("ips", set())
-                                for data in self.alts_handler.alts_data.values()
-                            )
-                        )
-                        print(f"[{self.client.user}] Alts refresh complete: {total_users} users, {len(all_ips)} IPs")
-                    else:
-                        print(f"[{self.client.user}] Alts refresh failed. Check logs.")
-                except Exception as e:
-                    print(f"[{self.client.user}] Error during auto-refresh: {e}")
-            else:
-                print(f"[{self.client.user}] Skipping alts auto-refresh (URL not configured)")
-            
-            # Wait 60 seconds before next refresh
-            await asyncio.sleep(60)
+        edit_expired = [k for k, v in self.edit_history.items() if now - datetime.fromisoformat(v.get("timestamp", now.isoformat())) > timedelta(minutes=10)]
+        for k in edit_expired: del self.edit_history[k]
+        if edit_expired: print(f"[{self.client.user}] Cleaned {len(edit_expired)} old edit history entries.")
 
-    async def handle_command(self, message, command_name: str, args: list):
-        if not self.check_authorization(message.author.id):
-            if self.oauth_handler:
-                await self.bot_send(message.channel, self.oauth_handler.get_authorization_message(message.author.mention))
-            return
-        
-        try:
-            if command_name in self.user_commands:
-                await self.user_commands[command_name](message, args)
-            elif command_name in self.admin_commands and str(message.author.id) in self.config.admin_ids:
-                await self.admin_commands[command_name](message, args)
-        except Exception as e:
-            print(f"[{self.client.user}] Error in command '{command_name}': {e}")
-            import traceback; traceback.print_exc()
-
-    async def on_ready(self):
-        print(f"Logged in as {self.client.user} (ID: {self.client.user.id}) [Type: {self.token_type}]")
-        if self.token_type == "bot" and self.tree:
+async def auto_refresh_alts(self):
+    """Automatically refreshes alts database every minute."""
+    await self.client.wait_until_ready()
+    
+    # Wait 60 seconds before first refresh to allow bot to fully initialize
+    await asyncio.sleep(60)
+    
+    while not self.client.is_closed():
+        if self.config.alts_refresh_url:
+            print(f"[{self.client.user}] Auto-refreshing alts database...")
             try:
-                print(f"[{self.client.user}] Syncing slash commands...")
-                synced = await self.tree.sync()
-                print(f"[{self.client.user}] Synced {len(synced)} slash command(s)")
-            except Exception as e: print(f"[{self.client.user}] Failed to sync slash commands: {e}")
+                success = await self.alts_handler.refresh_alts_data(
+                    self.config.alts_refresh_url, self.ip_handler
+                )
+                if success:
+                    total_users = len(self.alts_handler.alts_data)
+                    all_ips = set().union(
+                        *(
+                            data.get("ips", set())
+                            for data in self.alts_handler.alts_data.values()
+                        )
+                    )
+                    print(f"[{self.client.user}] Alts refresh complete: {total_users} users, {len(all_ips)} IPs")
+                else:
+                    print(f"[{self.client.user}] Alts refresh failed. Check logs.")
+            except Exception as e:
+                print(f"[{self.client.user}] Error during auto-refresh: {e}")
+        else:
+            print(f"[{self.client.user}] Skipping alts auto-refresh (URL not configured)")
         
-        status_map = {"online": self.discord.Status.online, "invisible": self.discord.Status.invisible, "idle": self.discord.Status.idle, "dnd": self.discord.Status.dnd}
-        status = status_map.get(self.config.discord_status_str.lower(), self.discord.Status.online)
+        # Wait 60 seconds before next refresh
+        await asyncio.sleep(60)
+
+async def handle_command(self, message, command_name: str, args: list):
+    if not self.check_authorization(message.author.id):
+        if self.oauth_handler:
+            await self.bot_send(message.channel, self.oauth_handler.get_authorization_message(message.author.mention))
+        return
+    
+    try:
+        if command_name in self.user_commands:
+            await self.user_commands[command_name](message, args)
+        elif command_name in self.admin_commands and str(message.author.id) in self.config.admin_ids:
+            await self.admin_commands[command_name](message, args)
+    except Exception as e:
+        print(f"[{self.client.user}] Error in command '{command_name}': {e}")
+        import traceback; traceback.print_exc()
+
+async def on_ready(self):
+    print(f"Logged in as {self.client.user} (ID: {self.client.user.id}) [Type: {self.token_type}]")
+    if self.token_type == "bot" and self.tree:
         try:
-            await self.client.change_presence(status=status)
-            print(f"[{self.client.user}] Status set to {status}")
-        except Exception as e:
-            if "MessageToDict" in str(e) and "including_default_value_fields" in str(e):
-                print(f"[{self.client.user}] Skipping status set (harmless protobuf issue)")
-            else:
-                print(f"[{self.client.user}] Error setting status: {e}")
+            print(f"[{self.client.user}] Syncing slash commands...")
+            synced = await self.tree.sync()
+            print(f"[{self.client.user}] Synced {len(synced)} slash command(s)")
+        except Exception as e: print(f"[{self.client.user}] Failed to sync slash commands: {e}")
+    
+    status_map = {"online": self.discord.Status.online, "invisible": self.discord.Status.invisible, "idle": self.discord.Status.idle, "dnd": self.discord.Status.dnd}
+    status = status_map.get(self.config.discord_status_str.lower(), self.discord.Status.online)
+    try:
+        await self.client.change_presence(status=status)
+        print(f"[{self.client.user}] Status set to {status}")
+    except Exception as e:
+        if "MessageToDict" in str(e) and "including_default_value_fields" in str(e):
+            print(f"[{self.client.user}] Skipping status set (harmless protobuf issue)")
+        else:
+            print(f"[{self.client.user}] Error setting status: {e}")
 
-        # Start background tasks
-        self.client.loop.create_task(self.cleanup_forward_cache())
-        self.client.loop.create_task(self.cleanup_message_cache())
-        self.client.loop.create_task(self.auto_refresh_alts())
-        print(f"[{self.client.user}] Started background tasks (cache cleanup, alts auto-refresh)")
+    # Start background tasks
+    self.client.loop.create_task(self.cleanup_forward_cache())
+    self.client.loop.create_task(self.cleanup_message_cache())
+    self.client.loop.create_task(self.auto_refresh_alts())
+    print(f"[{self.client.user}] Started background tasks (cache cleanup, alts auto-refresh)")
 
-    async def on_presence_update(self, before, after): pass
+async def on_presence_update(self, before, after): pass
 
-    async def on_message(self, message):
-        if message.author.id == self.client.user.id: return
-        if message.author.bot:
-            if str(message.author.id) == ASTEROIDE_BOT_ID and self.config.get_guild_config(message.guild.id if message.guild else None, "detect-ips", self.config.default_detect_ips):
-                await self.handle_asteroide_response(message)
-            return
+async def on_message(self, message):
+    if message.author.id == self.client.user.id: return
+    if message.author.bot:
+        if str(message.author.id) == ASTEROIDE_BOT_ID and self.config.get_guild_config(message.guild.id if message.guild else None, "detect-ips", self.config.default_detect_ips):
+            await self.handle_asteroide_response(message)
+        return
 
-        if message.guild:
-            self.message_cache[message.id] = {"content": message.content, "timestamp": datetime.now()}
-            await asyncio.gather(
-                self.logging_handler.log_guild_message(message, self.config.get_guild_config(message.guild.id, "message-log", self.config.default_message_log, message.author.id, message.channel.id)),
-                self.logging_handler.log_guild_attachments(message, self.config.get_attachment_log_setting(message.guild.id, message.author.id, message.channel.id)),
-                return_exceptions=True
-            )
-        else: await self.logging_handler.log_dm(message)
+    if message.guild:
+        self.message_cache[message.id] = {"content": message.content, "timestamp": datetime.now()}
+        await asyncio.gather(
+            self.logging_handler.log_guild_message(message, self.config.get_guild_config(message.guild.id, "message-log", self.config.default_message_log, message.author.id, message.channel.id)),
+            self.logging_handler.log_guild_attachments(message, self.config.get_attachment_log_setting(message.guild.id, message.author.id, message.channel.id)),
+            return_exceptions=True
+        )
+    else: await self.logging_handler.log_dm(message)
 
-        await self._handle_sync_message(message)
+    await self._handle_sync_message(message)
 
-        # Only process text commands for selfbots (user tokens)
-        if self.token_type != "user":
-            return
-        
-        gid = message.guild.id if message.guild else None
-        if not self.config.get_guild_config(gid, "allow-commands", self.config.default_allow_commands, message.author.id, message.channel.id): return
+    # Only process text commands for selfbots (user tokens)
+    if self.token_type != "user":
+        return
+    
+    gid = message.guild.id if message.guild else None
+    if not self.config.get_guild_config(gid, "allow-commands", self.config.default_allow_commands, message.author.id, message.channel.id): return
 
-        prefix = self.config.get_prefix(gid)
-        if not message.content.startswith(prefix): return
-        
-        parts = message.content[len(prefix):].split()
-        if not parts: return
-        await self.handle_command(message, parts[0].lower(), parts[1:])
+    prefix = self.config.get_prefix(gid)
+    if not message.content.startswith(prefix): return
+    
+    parts = message.content[len(prefix):].split()
+    if not parts: return
+    await self.handle_command(message, parts[0].lower(), parts[1:])
 
-    async def handle_asteroide_response(self, message):
-        try:
-            if not re.search(r"\S+ has \d+ alts:", message.content): return
-            if parsed := self.alts_handler.parse_alts_response(message.content): self.alts_handler.store_alts_data(parsed)
-        except Exception as e: print(f"[{self.client.user}] Error handling Asteroide response: {e}")
+async def handle_asteroide_response(self, message):
+    try:
+        if not re.search(r"\S+ has \d+ alts:", message.content): return
+        if parsed := self.alts_handler.parse_alts_response(message.content): self.alts_handler.store_alts_data(parsed)
+    except Exception as e: print(f"[{self.client.user}] Error handling Asteroide response: {e}")
 
-    async def on_message_edit(self, before, after):
-        if after.author.id == self.client.user.id or not after.guild or after.author.bot: return
-        if not self.config.get_guild_config(after.guild.id, "prevent-editing", self.config.default_prevent_editing, after.author.id, after.channel.id): return
+async def on_message_edit(self, before, after):
+    if after.author.id == self.client.user.id or not after.guild or after.author.bot: return
+    if not self.config.get_guild_config(after.guild.id, "prevent-editing", self.config.default_prevent_editing, after.author.id, after.channel.id): return
 
-        original = self.message_cache.get(after.id, {}).get("content", before.content)
-        new = after.content or ""
-        if original == new: return
+    original = self.message_cache.get(after.id, {}).get("content", before.content)
+    new = after.content or ""
+    if original == new: return
 
-        if after.id not in self.edit_history: self.edit_history[after.id] = {"bot_msg": None, "all_edits": [], "original": original, "timestamp": datetime.now().isoformat()}
-        self.edit_history[after.id]["all_edits"].append(new)
-        
-        if not ((abs(len(new) - len(original)) >= 3 or calculate_edit_percentage(original, new) >= 20) and not is_likely_typo(original, new)): return
+    if after.id not in self.edit_history: self.edit_history[after.id] = {"bot_msg": None, "all_edits": [], "original": original, "timestamp": datetime.now().isoformat()}
+    self.edit_history[after.id]["all_edits"].append(new)
+    
+    if not ((abs(len(new) - len(original)) >= 3 or calculate_edit_percentage(original, new) >= 20) and not is_likely_typo(original, new)): return
 
-        try:
-            history = self.edit_history[after.id]
-            edit_lines = [f"**Original:** {original or '*empty*'}"] + [f"**Edited {i+1}:** {e or '*empty*'}" for i, e in enumerate(history['all_edits'][:-1])] + [f"**Now:** {new or '*empty*'}" ]
-            edit_info = f"**Edited by <@{after.author.id}>**\n" + "\n".join(edit_lines[0:1] + edit_lines[-1:] if len(edit_lines) <= 2 else edit_lines)
+    try:
+        history = self.edit_history[after.id]
+        edit_lines = [f"**Original:** {original or '*empty*'}"] + [f"**Edited {i+1}:** {e or '*empty*'}" for i, e in enumerate(history['all_edits'][:-1])] + [f"**Now:** {new or '*empty*'}" ]
+        edit_info = f"**Edited by <@{after.author.id}>**\n" + "\n".join(edit_lines[0:1] + edit_lines[-1:] if len(edit_lines) <= 2 else edit_lines)
 
-            if history["bot_msg"]: await history["bot_msg"].edit(content=edit_info)
-            else:
-                bot_msg = await self.bot_send(after.channel, content=edit_info)
-                if bot_msg: history["bot_msg"] = bot_msg
-        except Exception as e: print(f"[{self.client.user}] Error in on_message_edit: {e}")
+        if history["bot_msg"]: await history["bot_msg"].edit(content=edit_info)
+        else:
+            bot_msg = await self.bot_send(after.channel, content=edit_info)
+            if bot_msg: history["bot_msg"] = bot_msg
+    except Exception as e: print(f"[{self.client.user}] Error in on_message_edit: {e}")
 
-    async def on_message_delete(self, message):
-        gid = message.guild.id if message.guild else None
-        if gid is not None and not self.config.get_guild_config(gid, "prevent-deleting", self.config.default_prevent_deleting, message.author.id, message.channel.id): return
+async def on_message_delete(self, message):
+    gid = message.guild.id if message.guild else None
+    if gid is not None and not self.config.get_guild_config(gid, "prevent-deleting", self.config.default_prevent_deleting, message.author.id, message.channel.id): return
 
-        original = self.message_cache.get(message.id, {}).get("content", message.content)
-        final = message.content
-        
-        content_display = f"`{(final or original or '[Empty Message]').replace('`', '`')}`"
-        if original and final and original != final:
-            content_display = f"**Original:** `{original.replace('`', '`')}`\n**Final:** `{final.replace('`', '`')}`"
+    original = self.message_cache.get(message.id, {}).get("content", message.content)
+    final = message.content
+    
+    content_display = f"`{(final or original or '[Empty Message]').replace('`', '`')}`"
+    if original and final and original != final:
+        content_display = f"**Original:** `{original.replace('`', '`')}`\n**Final:** `{final.replace('`', '`')}`"
 
-        attachments = "\n\n**Attachments:**\n" + "\n".join([f"<{att.url}>" for att in message.attachments]) if message.attachments else ""
-        if not original and not final and not attachments: return
+    attachments = "\n\n**Attachments:**\n" + "\n".join([f"<{att.url}>" for att in message.attachments]) if message.attachments else ""
+    if not original and not final and not attachments: return
 
-        try: await self.bot_send(message.channel, f"{content_display}\ndeleted by <@{message.author.id}>{attachments}")
-        except Exception as e: print(f"[{self.client.user}] Error in on_message_delete: {e}")
-        finally:
-            if message.id in self.message_cache: del self.message_cache[message.id]
-            if message.id in self.edit_history: del self.edit_history[message.id]
+    try: await self.bot_send(message.channel, f"{content_display}\ndeleted by <@{message.author.id}>{attachments}")
+    except Exception as e: print(f"[{self.client.user}] Error in on_message_delete: {e}")
+    finally:
+        if message.id in self.message_cache: del self.message_cache[message.id]
+        if message.id in self.edit_history: del self.edit_history[message.id]
 
-    async def _handle_sync_message(self, message):
-        if not self.config.sync_channel_id or (message.guild and str(message.channel.id) == self.config.sync_channel_id): return
-        
-        is_dm = not message.guild
-        is_ping = message.guild and self.client.user in message.mentions
-        is_reply = message.reference and message.reference.resolved and message.reference.resolved.author == self.client.user
-        is_keyword = bool(re.search(r"liforra", message.content, re.IGNORECASE))
-        if not (is_dm or is_ping or is_reply or is_keyword): return
+async def _handle_sync_message(self, message):
+    if not self.config.sync_channel_id or (message.guild and str(message.channel.id) == self.config.sync_channel_id): return
+    
+    is_dm = not message.guild
+    is_ping = message.guild and self.client.user in message.mentions
+    is_reply = message.reference and message.reference.resolved and message.reference.resolved.author == self.client.user
+    is_keyword = bool(re.search(r"liforra", message.content, re.IGNORECASE))
+    if not (is_dm or is_ping or is_reply or is_keyword): return
 
-        try: target_channel = self.client.get_channel(int(self.config.sync_channel_id))
-        except (ValueError, TypeError): return print(f"[{self.client.user}] SYNC ERROR: Invalid sync-channel ID.")
+    try: target_channel = self.client.get_channel(int(self.config.sync_channel_id))
+    except (ValueError, TypeError): return print(f"[{self.client.user}] SYNC ERROR: Invalid sync-channel ID.")
+    if not target_channel: return print(f"[{self.client.user}] SYNC ERROR: Could not find sync channel.")
+
+    author_name = f"{message.author.name}#{message.author.discriminator}" if message.author.discriminator != '0' else message.author.name
+    header_parts = [f"**From `{author_name}`**"]
+    if message.guild: header_parts.append(f"in `{message.guild.name}` / <#{message.channel.id}>")
+    else: header_parts.append("in `DMs`")
+    header = " ".join(header_parts)
+
+    mention = f"<@{self.config.sync_mention_id}>" if is_ping and self.config.sync_mention_id else ""
+    
+    full_content = f"{header}\n{message.content}\n{mention}"
+    
+    files = []
+    if message.attachments:
+        import io
+        import httpx
+        async with httpx.AsyncClient() as http_client:
+            for att in message.attachments:
+                try:
+                    response = await http_client.get(att.url, timeout=60)
+                    response.raise_for_status()
+                    files.append(self.discord.File(io.BytesIO(response.content), filename=att.filename))
+                except Exception as e: print(f"[{self.client.user}] SYNC: Failed to re-download attachment {att.filename}: {e}")
+    
+    sent_message = await self.bot_send(target_channel, content=full_content, files=files)
+    if sent_message:
+        self.forward_cache[message.id] = {"forwarded_id": sent_message.id, "timestamp": datetime.now()}
