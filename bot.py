@@ -1060,32 +1060,48 @@ class Bot:
                             value=f"{last_seen} UTC",
                             inline=True
                         )
+
+                    # Separate current name from past names
+                    history_entries = []
+                    current_name_entry = None
+                    for entry in data["history"]:
+                        if entry.get("changed_at") is None:
+                            current_name_entry = entry
+                        # Also check if the 'name' is just a number, if so, it's not a valid name entry
+                        elif entry.get("changed_at"):
+                            history_entries.append(entry)
+
+                    # Sort past names by the observation timestamp
+                    history_entries.sort(key=lambda x: x["observed_at"])
                     
-                    # Sort history by changed_at
-                    history = sorted(
-                        data["history"], 
-                        key=lambda x: x.get("changed_at") or "9999-12-31T23:59:59"
-                    )
-                    
-                    # Build name changes field
                     changes_text = []
-                    for i, entry in enumerate(history[:15]):  # Limit to 15 to avoid embed limits
-                        name = entry.get("name", "Unknown")
+                    total_names = 0
+                    
+                    # Process sorted history
+                    if history_entries:
+                        total_names = len(history_entries)
+                        # The first name in the sorted list is the original
+                        original_name = history_entries[0].get("changed_at")
+                        if original_name:
+                             changes_text.append(f"`1.` **{original_name}** - *Original*")
                         
-                        if entry.get("changed_at"):
-                            timestamp = entry["changed_at"][:10]  # Just the date
-                            changes_text.append(f"`{i+1}.` **{name}** - {timestamp}")
-                        else:
-                            if i == len(history) - 1:
-                                changes_text.append(f"`{i+1}.` **{name}** - *Current*")
-                            else:
-                                changes_text.append(f"`{i+1}.` **{name}** - *Original*")
+                        # Display subsequent name changes
+                        for i, entry in enumerate(history_entries[1:14]): # Show up to 13 past changes + original
+                            name = entry.get("changed_at")
+                            timestamp = entry["observed_at"][:10]
+                            changes_text.append(f"`{i+2}.` **{name}** - {timestamp}")
                     
-                    if len(history) > 15:
-                        changes_text.append(f"*... and {len(history) - 15} more names*")
+                    # Add current name at the end
+                    if current_name_entry:
+                        total_names += 1
+                        current_name = current_name_entry.get("name", username)
+                        changes_text.append(f"`{len(changes_text) + 1}.` **{current_name}** - *Current*")
                     
+                    if len(history_entries) > 14:
+                        changes_text.append(f"*... and {len(history_entries) - 14} more names*")
+
                     embed.add_field(
-                        name=f"📝 Name Changes ({len(history)} total)",
+                        name=f"📝 Name Changes ({total_names} total)",
                         value="\n".join(changes_text) if changes_text else "No changes found",
                         inline=False
                     )

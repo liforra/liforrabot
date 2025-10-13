@@ -627,7 +627,6 @@ class UserCommands:
                         content=f"❌ No name history found for `{username}`"
                     )
                 
-                # Format the output
                 output = [f"📜 **Name History for {username}**"]
                 
                 if data.get("uuid"):
@@ -637,27 +636,36 @@ class UserCommands:
                     last_seen = data["last_seen_at"][:19].replace("T", " ")
                     output.append(f"**Last Seen:** {last_seen} UTC")
                 
-                output.append(f"\n**Name Changes ({len(data['history'])}):**")
-                
-                # Sort history by changed_at, putting entries with no changed_at at the end
-                history = sorted(
-                    data["history"], 
-                    key=lambda x: x.get("changed_at") or "9999-12-31T23:59:59"
-                )
-                
-                for i, entry in enumerate(history):
-                    name = entry.get("name", "Unknown")
-                    
-                    if entry.get("changed_at"):
-                        # Format timestamp
-                        timestamp = entry["changed_at"][:19].replace("T", " ")
-                        output.append(f"{i+1}. `{name}` - {timestamp} UTC")
+                # Separate the current name (where changed_at is null) from the past names
+                history_entries = []
+                current_name_entry = None
+                for entry in data["history"]:
+                    if entry.get("changed_at") is None:
+                        current_name_entry = entry
                     else:
-                        # Original name or current name without timestamp
-                        if i == len(history) - 1:
-                            output.append(f"{i+1}. `{name}` - Current")
-                        else:
-                            output.append(f"{i+1}. `{name}` - Original")
+                        history_entries.append(entry)
+
+                # Sort past names by the observation timestamp
+                history_entries.sort(key=lambda x: x["observed_at"])
+                
+                # The first name in the sorted list is the original
+                if history_entries:
+                    output.append(f"\n**Name Changes ({len(history_entries) + 1} total):**")
+                    # Display original name
+                    original_name = history_entries[0].get("changed_at", "Unknown")
+                    output.append(f"1. `{original_name}` - Original")
+                    
+                    # Display subsequent name changes
+                    for i, entry in enumerate(history_entries[1:]):
+                        name = entry.get("changed_at", "Unknown")
+                        # Use observed_at as the date, since changed_at holds the name
+                        timestamp = entry["observed_at"][:10]
+                        output.append(f"{i+2}. `{name}` - {timestamp}")
+                
+                # Display the current name last
+                if current_name_entry:
+                    current_name = current_name_entry.get("name", username)
+                    output.append(f"{len(history_entries) + 1}. `{current_name}` - Current")
                 
                 output.append(f"\n**Profile Links:**")
                 output.append(f"• NameMC: https://namemc.com/profile/{username}")
