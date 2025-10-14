@@ -1044,14 +1044,13 @@ class Bot:
                     )
                     response.raise_for_status()
                     data = response.json()
-                    
-                    if not data.get("history"):
+                    # Handle not found (404) in API response
+                    if (isinstance(data, dict) and data.get("code") == 404) or not data.get("history"):
                         await interaction.followup.send(
-                            f"❌ No name history found for `{username}`",
+                            f"❌ No name history found for `{username}`. The player does not exist or has no recorded name changes.",
                             ephemeral=_ephemeral
                         )
                         return
-                    
                     embed = self.discord.Embed(
                         title=f"📜 Name History",
                         description=f"**Player:** {username}",
@@ -1059,14 +1058,12 @@ class Bot:
                         timestamp=datetime.now(),
                         url=f"https://namemc.com/profile/{username}"
                     )
-                    
                     if data.get("uuid"):
                         embed.add_field(
                             name="🆔 UUID",
                             value=f"`{data['uuid']}`",
                             inline=False
                         )
-                    
                     if data.get("last_seen_at"):
                         last_seen = data["last_seen_at"][:19].replace("T", " ")
                         embed.add_field(
@@ -1074,146 +1071,64 @@ class Bot:
                             value=f"{last_seen} UTC",
                             inline=True
                         )
-
                     # Sort by id to ensure correct chronological order
                     history = sorted(data["history"], key=lambda x: x.get("id", 0))
-                    
                     changes_text = []
                     for idx, entry in enumerate(history, 1):
                         name = entry['name']
-                        
                         if entry.get("changed_at") is None:
-                            # No timestamp means it's either original or current
-                            if idx == 1:
-                                label = "Original"
-                            else:
-                                label = "Current"
+                            label = "Original Name"
                         else:
-                            # Has timestamp - this is when they changed TO this name
-                            label = entry["changed_at"][:10]
-                        
+                            label = entry["changed_at"][:19].replace("T", " ") + " UTC"
                         changes_text.append(f"`{idx}.` **{name}** - {label}")
-                    
                     # Limit to first 15 entries to avoid hitting embed limits
                     if len(changes_text) > 15:
                         display_text = changes_text[:15]
                         display_text.append(f"*... and {len(changes_text) - 15} more names*")
                     else:
                         display_text = changes_text
-
                     embed.add_field(
                         name=f"📝 Name Changes ({len(history)} total)",
                         value="\n".join(display_text) if display_text else "No changes found",
                         inline=False
                     )
-                    
                     # Profile links
                     links = [f"[NameMC](https://namemc.com/profile/{username})"]
                     if data.get("uuid"):
                         links.append(f"[LabyMod](https://laby.net/@{data['uuid']})")
-                    
                     embed.add_field(
                         name="🔗 Profile Links",
                         value=" • ".join(links),
                         inline=False
                     )
-                    
                     embed.set_footer(text="liforra.de | Liforras Utility bot | Powered by liforra.de Name History API")
-                    
                     await interaction.followup.send(embed=embed, ephemeral=_ephemeral)
-                    try:
-                        async with httpx.AsyncClient() as client:
-                            response = await client.get(
-                                f"https://liforra.de/api/namehistory?username={username}",
-                                timeout=15
-                            )
-                            response.raise_for_status()
-                            data = response.json()
-                            # Handle not found (404) in API response
-                            if (isinstance(data, dict) and data.get("code") == 404) or not data.get("history"):
-                                await interaction.followup.send(
-                                    f"❌ No name history found for `{username}`. The player does not exist or has no recorded name changes.",
-                                    ephemeral=_ephemeral
-                                )
-                                return
-                            embed = self.discord.Embed(
-                                title=f"📜 Name History",
-                                description=f"**Player:** {username}",
-                                color=0x9B59B6,
-                                timestamp=datetime.now(),
-                                url=f"https://namemc.com/profile/{username}"
-                            )
-                            if data.get("uuid"):
-                                embed.add_field(
-                                    name="🆔 UUID",
-                                    value=f"`{data['uuid']}`",
-                                    inline=False
-                                )
-                            if data.get("last_seen_at"):
-                                last_seen = data["last_seen_at"][:19].replace("T", " ")
-                                embed.add_field(
-                                    name="👀 Last Seen",
-                                    value=f"{last_seen} UTC",
-                                    inline=True
-                                )
-                            # Sort by id to ensure correct chronological order
-                            history = sorted(data["history"], key=lambda x: x.get("id", 0))
-                            changes_text = []
-                            for idx, entry in enumerate(history, 1):
-                                name = entry['name']
-                                if entry.get("changed_at") is None:
-                                    label = "Original Name"
-                                else:
-                                    label = entry["changed_at"][:19].replace("T", " ") + " UTC"
-                                changes_text.append(f"`{idx}.` **{name}** - {label}")
-                            # Limit to first 15 entries to avoid hitting embed limits
-                            if len(changes_text) > 15:
-                                display_text = changes_text[:15]
-                                display_text.append(f"*... and {len(changes_text) - 15} more names*")
-                            else:
-                                display_text = changes_text
-                            embed.add_field(
-                                name=f"📝 Name Changes ({len(history)} total)",
-                                value="\n".join(display_text) if display_text else "No changes found",
-                                inline=False
-                            )
-                            # Profile links
-                            links = [f"[NameMC](https://namemc.com/profile/{username})"]
-                            if data.get("uuid"):
-                                links.append(f"[LabyMod](https://laby.net/@{data['uuid']})")
-                            embed.add_field(
-                                name="🔗 Profile Links",
-                                value=" • ".join(links),
-                                inline=False
-                            )
-                            embed.set_footer(text="liforra.de | Liforras Utility bot | Powered by liforra.de Name History API")
-                            await interaction.followup.send(embed=embed, ephemeral=_ephemeral)
-                    except httpx.HTTPStatusError as e:
-                        if e.response.status_code == 429:
-                            await interaction.followup.send(
-                                "⏱️ Rate limit exceeded. Please wait before trying again.",
-                                ephemeral=_ephemeral
-                            )
-                        elif e.response.status_code == 404:
-                            await interaction.followup.send(
-                                f"❌ No name history found for `{username}`. The player does not exist or has no recorded name changes.",
-                                ephemeral=_ephemeral
-                            )
-                        elif e.response.status_code == 503:
-                            await interaction.followup.send(
-                                "⚠️ The name history service is temporarily unavailable (503). This usually means the API couldn't fetch data from upstream sources or is experiencing issues. Please try again later.",
-                                ephemeral=_ephemeral
-                            )
-                        else:
-                            await interaction.followup.send(
-                                f"❌ API Error: {e.response.status_code}",
-                                ephemeral=_ephemeral
-                            )
-                    except Exception as e:
-                        await interaction.followup.send(
-                            f"❌ Error: {type(e).__name__}",
-                            ephemeral=_ephemeral
-                        )
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 429:
+                    await interaction.followup.send(
+                        "⏱️ Rate limit exceeded. Please wait before trying again.",
+                        ephemeral=_ephemeral
+                    )
+                elif e.response.status_code == 404:
+                    await interaction.followup.send(
+                        f"❌ No name history found for `{username}`. The player does not exist or has no recorded name changes.",
+                        ephemeral=_ephemeral
+                    )
+                elif e.response.status_code == 503:
+                    await interaction.followup.send(
+                        "⚠️ The name history service is temporarily unavailable (503). This usually means the API couldn't fetch data from upstream sources or is experiencing issues. Please try again later.",
+                        ephemeral=_ephemeral
+                    )
+                else:
+                    await interaction.followup.send(
+                        f"❌ API Error: {e.response.status_code}",
+                        ephemeral=_ephemeral
+                    )
+            except Exception as e:
+                await interaction.followup.send(
+                    f"❌ Error: {type(e).__name__}",
+                    ephemeral=_ephemeral
+                )
                 most_likely_country = max(country_counts, key=lambda c: country_counts[c]["count"])
                 country_data = country_counts[most_likely_country]
                 flag = COUNTRY_FLAGS.get(country_data['code'], '🌐')
