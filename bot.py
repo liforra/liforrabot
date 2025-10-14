@@ -1121,103 +1121,99 @@ class Bot:
                     embed.set_footer(text="liforra.de | Liforras Utility bot | Powered by liforra.de Name History API")
                     
                     await interaction.followup.send(embed=embed, ephemeral=_ephemeral)
-                    
-            except httpx.HTTPStatusError as e:
-                if e.response.status_code == 429:
-                    await interaction.followup.send(
-                        "⏱️ Rate limit exceeded. Please wait before trying again.",
-                        ephemeral=_ephemeral
-                    )
-                else:
-                    await interaction.followup.send(
-                        f"❌ API Error: {e.response.status_code}",
-                        ephemeral=_ephemeral
-                    )
-            except Exception as e:
-                await interaction.followup.send(
-                    f"❌ Error: {type(e).__name__}",
-                    ephemeral=_ephemeral
-                )
-
-        @self.tree.command(name="pnamehistory", description="[Private] Get complete Minecraft name change history")
-        @self.app_commands.describe(username="The Minecraft username to look up")
-        @self.app_commands.allowed_installs(guilds=True, users=True)
-        @self.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
-        async def pnamehistory_slash(interaction: self.discord.Interaction, username: str):
-            await namehistory_slash(interaction, username, _ephemeral=True)
-
-        # Alts command with pagination, IP hiding, and bug fixes for large accounts
-        @self.tree.command(name="alts", description="Look up a user's known alts")
-        @self.app_commands.describe(
-            username="The username to look up",
-            _ip="[ADMIN] Show IP addresses (default: False)"
-        )
-        @self.app_commands.allowed_installs(guilds=True, users=True)
-        @self.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
-        async def alts_slash(interaction: self.discord.Interaction, username: str, _ip: bool = False, _ephemeral: bool = False):
-            if not self.check_authorization(interaction.user.id):
-                await interaction.response.send_message(
-                    self.oauth_handler.get_authorization_message(interaction.user.mention),
-                    ephemeral=True
-                )
-                return
-            
-            is_allowed, wait_time = self.check_rate_limit(interaction.user.id, "alts", limit=2, window=60)
-            if not is_allowed:
-                await interaction.response.send_message(
-                    f"⏱️ Rate limit exceeded. Please wait {wait_time} seconds.",
-                    ephemeral=True
-                )
-                return
-            
-            is_admin = str(interaction.user.id) in self.config.admin_ids
-            show_ips = _ip and is_admin
-            
-            if _ip and not is_admin:
-                await interaction.response.send_message(
-                    "❌ Only administrators can view IP addresses.",
-                    ephemeral=True
-                )
-                return
-            
-            await interaction.response.defer(ephemeral=_ephemeral)
-            
-            search_term = username
-            found_user = None
-            lowercase_map = {k.lower(): k for k in self.alts_handler.alts_data.keys()}
-            
-            search_candidates = [search_term, f".{search_term}", f"...{search_term}"]
-            for candidate in search_candidates:
-                if candidate.lower() in lowercase_map:
-                    found_user = lowercase_map[candidate.lower()]
-                    break
-            
-            if not found_user:
-                await interaction.followup.send(f"❌ No data for `{search_term}`", ephemeral=_ephemeral)
-                return
-            
-            data = self.alts_handler.alts_data[found_user]
-            alts = sorted(list(data.get("alts", set())))
-            ips = sorted(list(data.get("ips", set())))
-            
-            # Optimized location calculation
-            country_counts = {}  # { "country_name": {"count": float, "code": "str"} }
-            for ip in ips:
-                if ip in self.ip_handler.ip_geo_data:
-                    geo = self.ip_handler.ip_geo_data[ip]
-                    vpn_provider = self.ip_handler.detect_vpn_provider(geo.get("isp", ""), geo.get("org", ""))
-                    is_vpn = vpn_provider or geo.get("proxy") or geo.get("hosting")
-                    if not is_vpn:
-                        country = geo.get("country")
-                        country_code = geo.get("countryCode")
-                        if country and country_code:
-                            if country not in country_counts:
-                                country_counts[country] = {"count": 0, "code": country_code}
-                            weight = 0.3 if country_code == "US" else 1.0
-                            country_counts[country]["count"] += weight
-            
-            likely_location_str = "N/A"
-            if country_counts:
+                    try:
+                        async with httpx.AsyncClient() as client:
+                            response = await client.get(
+                                f"https://liforra.de/api/namehistory?username={username}",
+                                timeout=15
+                            )
+                            response.raise_for_status()
+                            data = response.json()
+                            # Handle not found (404) in API response
+                            if (isinstance(data, dict) and data.get("code") == 404) or not data.get("history"):
+                                await interaction.followup.send(
+                                    f"❌ No name history found for `{username}`. The player does not exist or has no recorded name changes.",
+                                    ephemeral=_ephemeral
+                                )
+                                return
+                            embed = self.discord.Embed(
+                                title=f"📜 Name History",
+                                description=f"**Player:** {username}",
+                                color=0x9B59B6,
+                                timestamp=datetime.now(),
+                                url=f"https://namemc.com/profile/{username}"
+                            )
+                            if data.get("uuid"):
+                                embed.add_field(
+                                    name="🆔 UUID",
+                                    value=f"`{data['uuid']}`",
+                                    inline=False
+                                )
+                            if data.get("last_seen_at"):
+                                last_seen = data["last_seen_at"][:19].replace("T", " ")
+                                embed.add_field(
+                                    name="👀 Last Seen",
+                                    value=f"{last_seen} UTC",
+                                    inline=True
+                                )
+                            # Sort by id to ensure correct chronological order
+                            history = sorted(data["history"], key=lambda x: x.get("id", 0))
+                            changes_text = []
+                            for idx, entry in enumerate(history, 1):
+                                name = entry['name']
+                                if entry.get("changed_at") is None:
+                                    label = "Original Name"
+                                else:
+                                    label = entry["changed_at"][:19].replace("T", " ") + " UTC"
+                                changes_text.append(f"`{idx}.` **{name}** - {label}")
+                            # Limit to first 15 entries to avoid hitting embed limits
+                            if len(changes_text) > 15:
+                                display_text = changes_text[:15]
+                                display_text.append(f"*... and {len(changes_text) - 15} more names*")
+                            else:
+                                display_text = changes_text
+                            embed.add_field(
+                                name=f"📝 Name Changes ({len(history)} total)",
+                                value="\n".join(display_text) if display_text else "No changes found",
+                                inline=False
+                            )
+                            # Profile links
+                            links = [f"[NameMC](https://namemc.com/profile/{username})"]
+                            if data.get("uuid"):
+                                links.append(f"[LabyMod](https://laby.net/@{data['uuid']})")
+                            embed.add_field(
+                                name="🔗 Profile Links",
+                                value=" • ".join(links),
+                                inline=False
+                            )
+                            embed.set_footer(text="liforra.de | Liforras Utility bot | Powered by liforra.de Name History API")
+                            await interaction.followup.send(embed=embed, ephemeral=_ephemeral)
+                    except httpx.HTTPStatusError as e:
+                        if e.response.status_code == 429:
+                            await interaction.followup.send(
+                                "⏱️ Rate limit exceeded. Please wait before trying again.",
+                                ephemeral=_ephemeral
+                            )
+                        elif e.response.status_code == 404:
+                            await interaction.followup.send(
+                                f"❌ No name history found for `{username}`. The player does not exist or has no recorded name changes.",
+                                ephemeral=_ephemeral
+                            )
+                        elif e.response.status_code == 503:
+                            await interaction.followup.send(
+                                "⚠️ The name history service is temporarily unavailable (503). This usually means the API couldn't fetch data from upstream sources or is experiencing issues. Please try again later.",
+                                ephemeral=_ephemeral
+                            )
+                        else:
+                            await interaction.followup.send(
+                                f"❌ API Error: {e.response.status_code}",
+                                ephemeral=_ephemeral
+                            )
+                    except Exception as e:
+                        await interaction.followup.send(
+                            f"❌ Error: {type(e).__name__}",
+                            ephemeral=_ephemeral
+                        )
                 most_likely_country = max(country_counts, key=lambda c: country_counts[c]["count"])
                 country_data = country_counts[most_likely_country]
                 flag = COUNTRY_FLAGS.get(country_data['code'], '🌐')
