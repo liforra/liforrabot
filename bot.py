@@ -918,19 +918,15 @@ class Bot:
                         headers={"User-Agent": "https://liforra.de"},
                         timeout=10
                     )
+                    response.raise_for_status()
                     data = response.json()
+                    
                     # Handle new API error format for not found
                     if (isinstance(data, dict) and data.get("code") == 404) or (data.get("code") != "player.found"):
                         await interaction.followup.send(
                             f"❌ No player found for `{username}`.",
                             ephemeral=_ephemeral
                         )
-                        return
-                    player = data["data"]["player"]
-                    data = response.json()
-                    
-                    if data.get("code") != "player.found":
-                        await interaction.followup.send(f"❌ Player `{username}` not found", ephemeral=_ephemeral)
                         return
                     
                     player = data["data"]["player"]
@@ -1044,6 +1040,7 @@ class Bot:
                     )
                     response.raise_for_status()
                     data = response.json()
+                    
                     # Handle not found (404) in API response
                     if (isinstance(data, dict) and data.get("code") == 404) or not data.get("history"):
                         await interaction.followup.send(
@@ -1051,6 +1048,7 @@ class Bot:
                             ephemeral=_ephemeral
                         )
                         return
+                    
                     embed = self.discord.Embed(
                         title=f"📜 Name History",
                         description=f"**Player:** {username}",
@@ -1058,12 +1056,14 @@ class Bot:
                         timestamp=datetime.now(),
                         url=f"https://namemc.com/profile/{username}"
                     )
+                    
                     if data.get("uuid"):
                         embed.add_field(
                             name="🆔 UUID",
                             value=f"`{data['uuid']}`",
                             inline=False
                         )
+                    
                     if data.get("last_seen_at"):
                         last_seen = data["last_seen_at"][:19].replace("T", " ")
                         embed.add_field(
@@ -1071,8 +1071,10 @@ class Bot:
                             value=f"{last_seen} UTC",
                             inline=True
                         )
+                    
                     # Sort by id to ensure correct chronological order
                     history = sorted(data["history"], key=lambda x: x.get("id", 0))
+                    
                     changes_text = []
                     for idx, entry in enumerate(history, 1):
                         name = entry['name']
@@ -1081,28 +1083,35 @@ class Bot:
                         else:
                             label = entry["changed_at"][:19].replace("T", " ") + " UTC"
                         changes_text.append(f"`{idx}.` **{name}** - {label}")
+                    
                     # Limit to first 15 entries to avoid hitting embed limits
                     if len(changes_text) > 15:
                         display_text = changes_text[:15]
                         display_text.append(f"*... and {len(changes_text) - 15} more names*")
                     else:
                         display_text = changes_text
+                    
                     embed.add_field(
                         name=f"📝 Name Changes ({len(history)} total)",
                         value="\n".join(display_text) if display_text else "No changes found",
                         inline=False
                     )
+                    
                     # Profile links
                     links = [f"[NameMC](https://namemc.com/profile/{username})"]
                     if data.get("uuid"):
                         links.append(f"[LabyMod](https://laby.net/@{data['uuid']})")
+                    
                     embed.add_field(
                         name="🔗 Profile Links",
                         value=" • ".join(links),
                         inline=False
                     )
+                    
                     embed.set_footer(text="liforra.de | Liforras Utility bot | Powered by liforra.de Name History API")
+                    
                     await interaction.followup.send(embed=embed, ephemeral=_ephemeral)
+                    
             except httpx.HTTPStatusError as e:
                 if e.response.status_code == 429:
                     await interaction.followup.send(
@@ -1129,6 +1138,96 @@ class Bot:
                     f"❌ Error: {type(e).__name__}",
                     ephemeral=_ephemeral
                 )
+
+        @self.tree.command(name="pnamehistory", description="[Private] Get complete Minecraft name change history")
+        @self.app_commands.describe(username="The Minecraft username to look up")
+        @self.app_commands.allowed_installs(guilds=True, users=True)
+        @self.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+        async def pnamehistory_slash(interaction: self.discord.Interaction, username: str):
+            await namehistory_slash(interaction, username, _ephemeral=True)
+
+        # Alts lookup command - FIXED VERSION
+        @self.tree.command(name="alts", description="Look up a user's known alts")
+        @self.app_commands.describe(
+            username="The username to look up",
+            _ip="[ADMIN] Show IP addresses (default: False)"
+        )
+        @self.app_commands.allowed_installs(guilds=True, users=True)
+        @self.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+        async def alts_slash(interaction: self.discord.Interaction, username: str, _ip: bool = False, _ephemeral: bool = False):
+            if not self.check_authorization(interaction.user.id):
+                await interaction.response.send_message(
+                    self.oauth_handler.get_authorization_message(interaction.user.mention),
+                    ephemeral=True
+                )
+                return
+            
+            # Rate limiting: 2 requests per minute
+            is_allowed, wait_time = self.check_rate_limit(interaction.user.id, "alts", limit=2, window=60)
+            if not is_allowed:
+                await interaction.response.send_message(
+                    f"⏱️ Rate limit exceeded. Please wait {wait_time} seconds before using this command again.",
+                    ephemeral=True
+                )
+                return
+            
+            await interaction.response.defer(ephemeral=_ephemeral)
+            
+            search_term = username
+            found_user = None
+
+            lowercase_map = {
+                k.lower(): k for k in self.alts_handler.alts_data.keys()
+            }
+
+            if search_term.startswith("."):
+                if search_term.lower() in lowercase_map:
+                    found_user = lowercase_map[search_term.lower()]
+            else:
+                search_candidates = [
+                    search_term,
+                    f".{search_term}",
+                    f"...{search_term}",
+                ]
+                for candidate in search_candidates:
+                    if candidate.lower() in lowercase_map:
+                        found_user = lowercase_map[candidate.lower()]
+                        break
+
+            if not found_user:
+                await interaction.followup.send(
+                    f"❌ No data for `{search_term}`",
+                    ephemeral=_ephemeral
+                )
+                return
+
+            data = self.alts_handler.alts_data[found_user]
+            alts = sorted(list(data.get("alts", set())))
+            ips = sorted(list(data.get("ips", set())))
+            
+            # Check if admin and if _ip flag is set
+            is_admin = str(interaction.user.id) in self.config.admin_ids
+            show_ips = _ip and is_admin
+
+            # Calculate most common non-VPN country - FIXED WITH PROPER IMPORT
+            country_counts = defaultdict(lambda: {"count": 0, "code": None})
+            
+            for ip in ips:
+                if ip in self.ip_handler.ip_geo_data:
+                    geo = self.ip_handler.ip_geo_data[ip]
+                    vpn_provider = self.ip_handler.detect_vpn_provider(geo.get("isp", ""), geo.get("org", ""))
+                    is_vpn = vpn_provider or geo.get("proxy") or geo.get("hosting")
+                    
+                    if not is_vpn:
+                        country = geo.get("country")
+                        country_code = geo.get("countryCode")
+                        if country and country_code:
+                            weight = 0.3 if country_code == "US" else 1.0
+                            country_counts[country]["count"] += weight
+                            country_counts[country]["code"] = country_code
+
+            likely_location_str = "Unknown"
+            if country_counts:
                 most_likely_country = max(country_counts, key=lambda c: country_counts[c]["count"])
                 country_data = country_counts[most_likely_country]
                 flag = COUNTRY_FLAGS.get(country_data['code'], '🌐')
@@ -1160,7 +1259,7 @@ class Bot:
                     current_field_value += f"{item}\n"
                     item_count_in_field += 1
                 
-                if current_field_value: # Add the last remaining field
+                if current_field_value:  # Add the last remaining field
                     fields.append({
                         "name": title if not fields else "\u200b",
                         "value": current_field_value,
@@ -1236,7 +1335,6 @@ class Bot:
                 embed.add_field(name="Known Alts", value="None found", inline=False)
                 embed.set_footer(text="liforra.de | Liforras Utility bot | Page 1/1")
                 embeds.append(embed)
-
 
             if len(embeds) == 1:
                 await interaction.followup.send(embed=embeds[0], ephemeral=_ephemeral)
