@@ -1004,7 +1004,13 @@ class Bot:
                     await interaction.followup.send(embed=embed, ephemeral=_ephemeral)
                     
             except httpx.HTTPStatusError as e:
-                await interaction.followup.send(f"❌ API Error: {e.response.status_code}", ephemeral=_ephemeral)
+                if e.response.status_code == 503:
+                    await interaction.followup.send(
+                        "⚠️ The player info service is temporarily unavailable (503). This usually means the API couldn't fetch data from upstream sources or is experiencing issues. Please try again later.",
+                        ephemeral=_ephemeral
+                    )
+                else:
+                    await interaction.followup.send(f"❌ API Error: {e.response.status_code}", ephemeral=_ephemeral)
             except Exception as e:
                 await interaction.followup.send(f"❌ Error: {type(e).__name__}", ephemeral=_ephemeral)
 
