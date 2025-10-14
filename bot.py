@@ -1883,23 +1883,33 @@ Match Status = {self.config.match_status}
 
     async def on_message_delete(self, message):
         gid = message.guild.id if message.guild else None
-        if gid is not None and not self.config.get_guild_config(gid, "prevent-deleting", self.config.default_prevent_deleting, message.author.id, message.channel.id): return
+        if gid is not None and not self.config.get_guild_config(gid, "prevent-deleting", self.config.default_prevent_deleting, message.author.id, message.channel.id):
+            return
 
         original = self.message_cache.get(message.id, {}).get("content", message.content)
         final = message.content
-        
+
         content_display = f"`{(final or original or '[Empty Message]').replace('`', '`')}`"
         if original and final and original != final:
             content_display = f"**Original:** `{original.replace('`', '`')}`\n**Final:** `{final.replace('`', '`')}`"
 
         attachments = "\n\n**Attachments:**\n" + "\n".join([f"<{att.url}>" for att in message.attachments]) if message.attachments else ""
-        if not original and not final and not attachments: return
+        if not original and not final and not attachments:
+            return
 
-        try: await self.bot_send(message.channel, f"{content_display}\ndeleted by <@{message.author.id}>{attachments}")
-        except Exception as e: print(f"[{self.client.user}] Error in on_message_delete: {e}")
+        try:
+            # If the selfbot deleted its own message, only resend the exact same message (no 'deleted by' note)
+            if message.author.id == self.client.user.id:
+                await self.bot_send(message.channel, (final or original or '[Empty Message]') + (attachments if attachments else ""))
+            else:
+                await self.bot_send(message.channel, f"{content_display}\ndeleted by <@{message.author.id}>{attachments}")
+        except Exception as e:
+            print(f"[{self.client.user}] Error in on_message_delete: {e}")
         finally:
-            if message.id in self.message_cache: del self.message_cache[message.id]
-            if message.id in self.edit_history: del self.edit_history[message.id]
+            if message.id in self.message_cache:
+                del self.message_cache[message.id]
+            if message.id in self.edit_history:
+                del self.edit_history[message.id]
 
     async def _handle_sync_message(self, message):
         if not self.config.sync_channel_id or (message.guild and str(message.channel.id) == self.config.sync_channel_id): return
