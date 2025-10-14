@@ -918,7 +918,15 @@ class Bot:
                         headers={"User-Agent": "https://liforra.de"},
                         timeout=10
                     )
-                    response.raise_for_status()
+                    data = response.json()
+                    # Handle new API error format for not found
+                    if (isinstance(data, dict) and data.get("code") == 404) or (data.get("code") != "player.found"):
+                        await interaction.followup.send(
+                            f"❌ No player found for `{username}`.",
+                            ephemeral=_ephemeral
+                        )
+                        return
+                    player = data["data"]["player"]
                     data = response.json()
                     
                     if data.get("code") != "player.found":
