@@ -138,13 +138,9 @@ class Bot:
         self.alts_handler = None  # Will be initialized after config load
         self.ip_handler = IPHandler(data_dir)
         self.logging_handler = LoggingHandler(data_dir)
-
-        # OAuth is only required for bot tokens
-        if self.token_type == "bot":
-            # Will be initialized after config is loaded
-            self.oauth_handler = None
-        else:
-            self.oauth_handler = None
+        
+        # OAuth is only required for bot tokens - will be initialized after config load
+        self.oauth_handler = None
 
         # Initialize command handlers
         self.user_commands_handler = UserCommands(self)
@@ -237,7 +233,7 @@ class Bot:
 
     def register_slash_commands(self):
         """Registers slash commands for bot tokens."""
-        if not self.tree or not self.oauth_handler:
+        if not self.tree:
             return
 
         import httpx
@@ -1402,7 +1398,7 @@ class Bot:
                 inline=False
             )
 
-            if self.token_type == "bot":
+            if self.token_type == "bot" and self.oauth_handler:
                 embed.add_field(
                     name="🔒 Authorization",
                     value=f"Most commands require authorization. [Click here to authorize]({self.oauth_handler.oauth_url})",
@@ -1679,7 +1675,7 @@ Match Status = {self.config.match_status}
         print(f"Starting bot instance ({self.token_type}) in directory: {self.data_dir}")
         self.config.load_config()
         
-        # Initialize OAuth handler after config is loaded
+        # Initialize OAuth handler after config is loaded (bot tokens only)
         if self.token_type == "bot":
             self.oauth_handler = OAuthHandler(
                 db_type=self.config.oauth_db_type,
