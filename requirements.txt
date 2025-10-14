@@ -7,3 +7,5 @@ pypng>=0.20220715.0
 websockets>=11.0.0
 cryptography>=41.0.0
 toml>=0.10.2
+psycopg2-binary
+pg8000

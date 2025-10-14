@@ -38,6 +38,12 @@ class ConfigManager:
         self.match_status = False
         self.sync_channel_id = ""
         self.sync_mention_id = ""
+        
+        # Database configuration for OAuth
+        self.oauth_db_type = "json"
+        self.oauth_db_url = "file:///home/liforra/bot-users.json"
+        self.oauth_db_user = None
+        self.oauth_db_password = None
 
     def load_config(self):
         """Loads configuration from file."""
@@ -57,6 +63,9 @@ class ConfigManager:
                     "general.token-file",
                     "general.admin-ids",
                     "general.alts-refresh-url",
+                    "general.oauth-db-url",
+                    "general.oauth-db-user",
+                    "general.oauth-db-password",
                 ],
             )
             self.alts_refresh_url = general.get("alts-refresh-url", "")
@@ -81,6 +90,14 @@ class ConfigManager:
             self.default_clean_spigey = general.get("clean-spigey", False)
             self.sync_channel_id = general.get("sync-channel", "")
             self.sync_mention_id = general.get("sync-mention-id", "")
+            
+            # OAuth database configuration
+            self.oauth_db_type = general.get("oauth-db-type", "json")
+            self.oauth_db_url = general.get(
+                "oauth-db-url", "file:///home/liforra/bot-users.json"
+            )
+            self.oauth_db_user = general.get("oauth-db-user")
+            self.oauth_db_password = general.get("oauth-db-password")
 
             self.guild_configs = self.config_data.get("guild", {})
 
@@ -98,6 +115,9 @@ class ConfigManager:
                     "general.token-file",
                     "general.admin-ids",
                     "general.alts-refresh-url",
+                    "general.oauth-db-url",
+                    "general.oauth-db-user",
+                    "general.oauth-db-password",
                 ],
                 "discord-status": "online",
                 "match-status": False,
@@ -118,6 +138,10 @@ class ConfigManager:
                 "allow-slurs": False,
                 "detect-ips": False,
                 "clean-spigey": False,
+                "oauth-db-type": "json",
+                "oauth-db-url": "file:///home/liforra/bot-users.json",
+                "oauth-db-user": "",
+                "oauth-db-password": "",
             },
             "guild": {},
         }

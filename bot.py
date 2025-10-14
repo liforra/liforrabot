@@ -138,9 +138,13 @@ class Bot:
         self.alts_handler = None  # Will be initialized after config load
         self.ip_handler = IPHandler(data_dir)
         self.logging_handler = LoggingHandler(data_dir)
-        
+
         # OAuth is only required for bot tokens
-        self.oauth_handler = OAuthHandler() if self.token_type == "bot" else None
+        if self.token_type == "bot":
+            # Will be initialized after config is loaded
+            self.oauth_handler = None
+        else:
+            self.oauth_handler = None
 
         # Initialize command handlers
         self.user_commands_handler = UserCommands(self)
@@ -1674,6 +1678,16 @@ Match Status = {self.config.match_status}
         """Starts the bot."""
         print(f"Starting bot instance ({self.token_type}) in directory: {self.data_dir}")
         self.config.load_config()
+        
+        # Initialize OAuth handler after config is loaded
+        if self.token_type == "bot":
+            self.oauth_handler = OAuthHandler(
+                db_type=self.config.oauth_db_type,
+                db_url=self.config.oauth_db_url,
+                db_user=self.config.oauth_db_user,
+                db_password=self.config.oauth_db_password,
+            )
+        
         self.alts_handler = AltsHandler(self.data_dir, self.config.default_clean_spigey)
         self.alts_handler.load_and_preprocess_alts_data()
         self.load_notes()
