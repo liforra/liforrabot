@@ -40,6 +40,11 @@ class ConfigManager:
         self.sync_mention_id = ""
         self.serpapi_key = ""
         
+        # New API keys
+        self.numlookup_api_key = ""
+        self.shodan_api_key = ""
+        self.steam_api_key = ""
+        
         # OAuth configuration
         self.oauth_db_type = "json"
         self.oauth_db_url = "file:///home/liforra/bot-users.json"
@@ -72,6 +77,9 @@ class ConfigManager:
                     "general.oauth-client-id",
                     "general.oauth-client-secret",
                     "general.serpapi-key",
+                    "general.numlookup-api-key",
+                    "general.shodan-api-key",
+                    "general.steam-api-key",
                 ],
             )
             self.alts_refresh_url = general.get("alts-refresh-url", "")
@@ -97,6 +105,11 @@ class ConfigManager:
             self.sync_channel_id = general.get("sync-channel", "")
             self.sync_mention_id = general.get("sync-mention-id", "")
             self.serpapi_key = general.get("serpapi-key", "")
+            
+            # New API keys
+            self.numlookup_api_key = general.get("numlookup-api-key", "")
+            self.shodan_api_key = general.get("shodan-api-key", "")
+            self.steam_api_key = general.get("steam-api-key", "")
             
             # OAuth configuration
             self.oauth_db_type = general.get("oauth-db-type", "json")
@@ -130,6 +143,9 @@ class ConfigManager:
                     "general.oauth-client-id",
                     "general.oauth-client-secret",
                     "general.serpapi-key",
+                    "general.numlookup-api-key",
+                    "general.shodan-api-key",
+                    "general.steam-api-key",
                 ],
                 "discord-status": "online",
                 "match-status": False,
@@ -151,6 +167,9 @@ class ConfigManager:
                 "detect-ips": False,
                 "clean-spigey": False,
                 "serpapi-key": "",
+                "numlookup-api-key": "",
+                "shodan-api-key": "",
+                "steam-api-key": "",
                 "oauth-db-type": "json",
                 "oauth-db-url": "file:///home/liforra/bot-users.json",
                 "oauth-db-user": "",

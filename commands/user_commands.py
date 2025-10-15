@@ -4,7 +4,7 @@ import discord
 import httpx
 import asyncio
 import re
-from typing import List
+from typing import List, Optional
 from utils.helpers import format_alt_name, format_alts_grid, is_valid_ip, is_valid_ipv6
 from utils.constants import COUNTRY_FLAGS
 
@@ -529,20 +529,39 @@ class UserCommands:
             )
 
     async def command_playerinfo(self, message: discord.Message, args: List[str]):
-        """Gets detailed Minecraft player information."""
+        """Gets detailed player information for Minecraft, Steam, or Xbox accounts."""
+        p = self.bot.config.get_prefix(message.guild.id if message.guild else None)
+        
         if not args:
-            p = self.bot.config.get_prefix(message.guild.id if message.guild else None)
             return await self.bot.bot_send(
                 message.channel,
-                content=f"Usage: `{p}playerinfo <username>`"
+                content=f"Usage: `{p}playerinfo <username/id> [minecraft|steam|xbox]`\nDefault: minecraft"
             )
         
         username = args[0]
+        account_type = args[1].lower() if len(args) > 1 else "minecraft"
+        
+        # Validate account type
+        if account_type not in ["minecraft", "steam", "xbox"]:
+            return await self.bot.bot_send(
+                message.channel,
+                content=f"❌ Invalid account type. Must be: minecraft, steam, or xbox"
+            )
         
         try:
+            # For Steam, try to resolve vanity URL to Steam ID64 first
+            if account_type == "steam" and not username.isdigit():
+                if resolved_id := await self._resolve_steam_vanity_url(username):
+                    username = resolved_id
+                else:
+                    return await self.bot.bot_send(
+                        message.channel,
+                        content=f"❌ Could not resolve Steam username `{username}`. Try using Steam ID64 instead."
+                    )
+            
             async with httpx.AsyncClient() as client:
                 response = await client.get(
-                    f"https://playerdb.co/api/player/minecraft/{username}",
+                    f"https://playerdb.co/api/player/{account_type}/{username}",
                     headers={"User-Agent": "https://liforra.de"},
                     timeout=10
                 )
@@ -552,40 +571,18 @@ class UserCommands:
                 if data.get("code") != "player.found":
                     return await self.bot.bot_send(
                         message.channel,
-                        content=f"❌ Player `{username}` not found"
+                        content=f"❌ {account_type.capitalize()} account `{username}` not found"
                     )
                 
                 player = data["data"]["player"]
                 
-                # For selfbots, send as formatted text (no embeds)
-                output = [
-                    f"🎮 **Player Info: {player['username']}**",
-                    f"",
-                    f"**🆔 UUID:** `{player['id']}`",
-                    f"**🔢 Raw UUID:** `{player['raw_id']}`",
-                    f"",
-                    f"**🔗 Links:**",
-                    f"• NameMC: https://namemc.com/profile/{player['username']}",
-                    f"• LabyMod: https://laby.net/@{player['username']}",
-                    f"• Avatar: {player['avatar']}",
-                    f"• Skin (download): https://crafatar.com/skins/{player['raw_id']}",
-                    f"• Full Body (with overlay): https://mc-heads.net/body/{player['raw_id']}/right",
-                ]
-                
-                if player.get('name_history') and len(player['name_history']) > 0:
-                    history_list = player['name_history'][:10]
-                    history = " → ".join([f"`{name}`" for name in history_list])
-                    if len(player['name_history']) > 10:
-                        history += f" (+{len(player['name_history']) - 10} more)"
-                    output.append(f"\n**📜 Name History:**\n{history}")
-                
-                cached_at = player['meta'].get('cached_at')
-                if cached_at:
-                    from datetime import datetime
-                    cached_time = datetime.fromtimestamp(cached_at).strftime('%Y-%m-%d %H:%M:%S UTC')
-                    output.append(f"\n*liforra.de | Liforras Utility bot | Powered by PlayerDB | Data cached at {cached_time}*")
-                else:
-                    output.append(f"\n*liforra.de | Liforras Utility bot | Powered by PlayerDB*")
+                # Format output based on account type
+                if account_type == "minecraft":
+                    output = self._format_minecraft_info(player)
+                elif account_type == "steam":
+                    output = self._format_steam_info(player)
+                elif account_type == "xbox":
+                    output = self._format_xbox_info(player)
                 
                 await self.bot.bot_send(message.channel, content="\n".join(output))
                 
@@ -600,8 +597,170 @@ class UserCommands:
                 content=f"❌ Error: {type(e).__name__}"
             )
 
+    async def _resolve_steam_vanity_url(self, vanity_url: str) -> Optional[str]:
+        """Resolves a Steam vanity URL to a Steam ID64."""
+        if not self.bot.config.steam_api_key:
+            return None
+        
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    "http://api.steampowered.com/ISteamUser/ResolveVanityURL/v0001/",
+                    params={"key": self.bot.config.steam_api_key, "vanityurl": vanity_url},
+                    timeout=10
+                )
+                data = response.json()
+                
+                if data.get("response", {}).get("success") == 1:
+                    return data["response"]["steamid"]
+        except Exception as e:
+            print(f"[Steam] Error resolving vanity URL: {e}")
+        return None
+
+    def _format_minecraft_info(self, player: dict) -> list:
+        """Formats Minecraft player information."""
+        output = [
+            f"🎮 **Minecraft Player Info: {player['username']}**",
+            f"",
+            f"**🆔 UUID:** `{player['id']}`",
+            f"**🔢 Raw UUID:** `{player['raw_id']}`",
+            f"",
+            f"**🔗 Links:**",
+            f"• NameMC: https://namemc.com/profile/{player['username']}",
+            f"• LabyMod: https://laby.net/@{player['username']}",
+            f"• Avatar: {player['avatar']}",
+            f"• Skin (download): https://crafatar.com/skins/{player['raw_id']}",
+            f"• Full Body (with overlay): https://mc-heads.net/body/{player['raw_id']}/right",
+        ]
+        
+        if player.get('name_history') and len(player['name_history']) > 0:
+            history_list = player['name_history'][:10]
+            history = " → ".join([f"`{name}`" for name in history_list])
+            if len(player['name_history']) > 10:
+                history += f" (+{len(player['name_history']) - 10} more)"
+            output.append(f"\n**📜 Name History:**\n{history}")
+        
+        cached_at = player.get('meta', {}).get('cached_at')
+        if cached_at:
+            from datetime import datetime
+            cached_time = datetime.fromtimestamp(cached_at).strftime('%Y-%m-%d %H:%M:%S UTC')
+            output.append(f"\n*liforra.de | Liforras Utility bot | Powered by PlayerDB | Data cached at {cached_time}*")
+        else:
+            output.append(f"\n*liforra.de | Liforras Utility bot | Powered by PlayerDB*")
+        
+        return output
+
+    def _format_steam_info(self, player: dict) -> list:
+        """Formats Steam player information."""
+        output = [
+            f"🎮 **Steam Player Info: {player.get('username', 'Unknown')}**",
+            f"",
+        ]
+        
+        # Steam ID (in various formats)
+        if player.get('id'):
+            output.append(f"**🆔 Steam ID:** `{player['id']}`")
+        if player.get('steamid'):
+            output.append(f"**🔢 Steam ID64:** `{player['steamid']}`")
+        if player.get('steam_id'):
+            output.append(f"**📝 Steam ID (legacy):** `{player['steam_id']}`")
+        if player.get('steam3_id'):
+            output.append(f"**📝 Steam3 ID:** `{player['steam3_id']}`")
+        
+        output.append(f"")
+        
+        # Profile info
+        if player.get('avatar'):
+            output.append(f"**🖼️ Avatar:** {player['avatar']}")
+        
+        if player.get('profile_url'):
+            output.append(f"**🔗 Profile URL:** {player['profile_url']}")
+        
+        # Account status
+        if 'profile_visibility' in player:
+            visibility = player['profile_visibility']
+            visibility_map = {3: "Public", 2: "Friends Only", 1: "Private"}
+            output.append(f"**👁️ Profile:** {visibility_map.get(visibility, 'Unknown')}")
+        
+        if player.get('time_created'):
+            from datetime import datetime
+            created_time = datetime.fromtimestamp(player['time_created']).strftime('%Y-%m-%d')
+            output.append(f"**📅 Account Created:** {created_time}")
+        
+        # Additional info
+        if player.get('country_code'):
+            output.append(f"**🌍 Country:** {player['country_code']}")
+        
+        if player.get('real_name'):
+            output.append(f"**👤 Real Name:** {player['real_name']}")
+        
+        cached_at = player.get('meta', {}).get('cached_at')
+        if cached_at:
+            from datetime import datetime
+            cached_time = datetime.fromtimestamp(cached_at).strftime('%Y-%m-%d %H:%M:%S UTC')
+            output.append(f"\n*liforra.de | Liforras Utility bot | Powered by PlayerDB | Data cached at {cached_time}*")
+        else:
+            output.append(f"\n*liforra.de | Liforras Utility bot | Powered by PlayerDB*")
+        
+        return output
+
+    def _format_xbox_info(self, player: dict) -> list:
+        """Formats Xbox player information."""
+        output = [
+            f"🎮 **Xbox Player Info: {player.get('username', 'Unknown')}**",
+            f"",
+        ]
+        
+        # Xbox IDs
+        if player.get('id'):
+            output.append(f"**🆔 Xbox User ID:** `{player['id']}`")
+        if player.get('xuid'):
+            output.append(f"**🔢 XUID:** `{player['xuid']}`")
+        
+        output.append(f"")
+        
+        # Profile info
+        if player.get('avatar'):
+            output.append(f"**🖼️ Avatar:** {player['avatar']}")
+        
+        if player.get('gamertag'):
+            output.append(f"**🎯 Gamertag:** {player['gamertag']}")
+        
+        # Stats
+        if player.get('gamerscore'):
+            output.append(f"**🏆 Gamerscore:** {player['gamerscore']:,}")
+        
+        if player.get('account_tier'):
+            output.append(f"**⭐ Account Tier:** {player['account_tier']}")
+        
+        if player.get('reputation'):
+            output.append(f"**📊 Reputation:** {player['reputation']}")
+        
+        # Additional info
+        if player.get('real_name'):
+            output.append(f"**👤 Real Name:** {player['real_name']}")
+        
+        if player.get('bio'):
+            bio = player['bio']
+            if len(bio) > 100:
+                bio = bio[:97] + "..."
+            output.append(f"**📝 Bio:** {bio}")
+        
+        if player.get('location'):
+            output.append(f"**📍 Location:** {player['location']}")
+        
+        cached_at = player.get('meta', {}).get('cached_at')
+        if cached_at:
+            from datetime import datetime
+            cached_time = datetime.fromtimestamp(cached_at).strftime('%Y-%m-%d %H:%M:%S UTC')
+            output.append(f"\n*liforra.de | Liforras Utility bot | Powered by PlayerDB | Data cached at {cached_time}*")
+        else:
+            output.append(f"\n*liforra.de | Liforras Utility bot | Powered by PlayerDB*")
+        
+        return output
+
     async def command_namehistory(self, message: discord.Message, args: List[str]):
-        """Gets Minecraft name history from the API - FIXED VERSION."""
+        """Gets Minecraft name history from the API."""
         p = self.bot.config.get_prefix(message.guild.id if message.guild else None)
         
         if not args:
@@ -681,6 +840,278 @@ class UserCommands:
                 message.channel,
                 content=f"❌ Error: {type(e).__name__}"
             )
+
+    async def command_phone(self, message: discord.Message, args: List[str]):
+        """Looks up phone number information."""
+        p = self.bot.config.get_prefix(message.guild.id if message.guild else None)
+        
+        if not args:
+            return await self.bot.bot_send(
+                message.channel,
+                content=f"Usage: `{p}phone <phone_number>`\nExample: `{p}phone +4917674905246`"
+            )
+        
+        if not self.bot.config.numlookup_api_key:
+            return await self.bot.bot_send(
+                message.channel,
+                content="❌ Phone lookup API key not configured."
+            )
+        
+        # Rate limit check
+        is_allowed, wait_time = self.bot.check_rate_limit(message.author.id, "phone", limit=5, window=60)
+        if not is_allowed:
+            return await self.bot.bot_send(
+                message.channel,
+                content=f"⏱️ Rate limit exceeded. Please wait {wait_time} seconds."
+            )
+        
+        phone_number = args[0]
+        
+        # Ensure phone number starts with +
+        if not phone_number.startswith('+'):
+            phone_number = '+' + phone_number
+        
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    f"https://api.numlookupapi.com/v1/validate/{phone_number}",
+                    headers={"apikey": self.bot.config.numlookup_api_key},
+                    timeout=10
+                )
+                response.raise_for_status()
+                data = response.json()
+                
+                if not data.get("valid"):
+                    return await self.bot.bot_send(
+                        message.channel,
+                        content=f"❌ Invalid phone number: `{phone_number}`"
+                    )
+                
+                flag = COUNTRY_FLAGS.get(data.get("country_code", ""), "🌐")
+                
+                output = [
+                    f"📱 **Phone Number Information**",
+                    f"",
+                    f"**Number:** `{data.get('number', 'N/A')}`",
+                    f"**Local Format:** `{data.get('local_format', 'N/A')}`",
+                    f"**International Format:** `{data.get('international_format', 'N/A')}`",
+                    f"",
+                    f"{flag} **Country:** {data.get('country_name', 'N/A')} ({data.get('country_code', 'N/A')})",
+                    f"**Country Prefix:** {data.get('country_prefix', 'N/A')}",
+                    f"",
+                    f"**📍 Location:** {data.get('location', 'N/A') or 'Not available'}",
+                    f"**📡 Carrier:** {data.get('carrier', 'N/A')}",
+                    f"**📞 Line Type:** {data.get('line_type', 'N/A').title()}",
+                    f"",
+                    f"*liforra.de | Liforras Utility bot | Powered by NumLookupAPI*"
+                ]
+                
+                await self.bot.bot_send(message.channel, content="\n".join(output))
+                
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 401:
+                await self.bot.bot_send(message.channel, "❌ Invalid NumLookupAPI key.")
+            elif e.response.status_code == 429:
+                await self.bot.bot_send(message.channel, "⏱️ API rate limit exceeded. Try again later.")
+            else:
+                await self.bot.bot_send(message.channel, f"❌ API Error: {e.response.status_code}")
+        except Exception as e:
+            await self.bot.bot_send(message.channel, f"❌ Error: {type(e).__name__}")
+
+    async def command_shodan(self, message: discord.Message, args: List[str]):
+        """Shodan search and host information."""
+        p = self.bot.config.get_prefix(message.guild.id if message.guild else None)
+        
+        if not args:
+            return await self.bot.bot_send(
+                message.channel,
+                content=f"Usage: `{p}shodan <host|search|count> [args]`\n"
+                       f"• `{p}shodan host <ip>` - Get host information\n"
+                       f"• `{p}shodan search <query>` - Search Shodan (admin only)\n"
+                       f"• `{p}shodan count <query>` - Count search results (admin only)"
+            )
+        
+        if not self.bot.config.shodan_api_key:
+            return await self.bot.bot_send(
+                message.channel,
+                content="❌ Shodan API key not configured."
+            )
+        
+        subcommand = args[0].lower()
+        is_admin = str(message.author.id) in self.bot.config.admin_ids
+        
+        if subcommand == "host":
+            if len(args) < 2:
+                return await self.bot.bot_send(
+                    message.channel,
+                    content=f"Usage: `{p}shodan host <ip>`"
+                )
+            
+            await self._shodan_host(message, args[1])
+        
+        elif subcommand in ["search", "count"]:
+            if not is_admin:
+                return await self.bot.bot_send(
+                    message.channel,
+                    content="❌ This command is admin-only."
+                )
+            
+            if len(args) < 2:
+                return await self.bot.bot_send(
+                    message.channel,
+                    content=f"Usage: `{p}shodan {subcommand} <query>`"
+                )
+            
+            query = " ".join(args[1:])
+            
+            if subcommand == "search":
+                await self._shodan_search(message, query)
+            else:
+                await self._shodan_count(message, query)
+        
+        else:
+            await self.bot.bot_send(
+                message.channel,
+                content=f"❌ Unknown subcommand. Use `{p}help shodan` for usage."
+            )
+
+    async def _shodan_host(self, message: discord.Message, ip: str):
+        """Gets detailed information about a host from Shodan."""
+        
+        if not is_valid_ip(ip):
+            return await self.bot.bot_send(
+                message.channel,
+                content="❌ Invalid IP address format."
+            )
+        
+        await self.bot.bot_send(message.channel, f"⚙️ Fetching Shodan data for `{ip}`...")
+        
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    f"https://api.shodan.io/shodan/host/{ip}",
+                    params={"key": self.bot.config.shodan_api_key},
+                    timeout=20
+                )
+                response.raise_for_status()
+                data = response.json()
+                
+                flag = COUNTRY_FLAGS.get(data.get("country_code", ""), "🌐")
+                
+                # Format IP display
+                if is_valid_ipv6(ip):
+                    ip_header = f"**Shodan Host Information for `{ip}`:**"
+                else:
+                    ip_header = f"**Shodan Host Information for [{ip}](<https://www.shodan.io/host/{ip}>):**"
+                
+                output = [
+                    ip_header,
+                    f"{flag} **Country:** {data.get('country_name', 'N/A')}",
+                    f"**Organization:** {data.get('org', 'N/A')}",
+                    f"**ISP:** {data.get('isp', 'N/A')}",
+                    f"**ASN:** {data.get('asn', 'N/A')}",
+                    f"**Hostnames:** {', '.join(data.get('hostnames', [])) or 'None'}",
+                    f"",
+                    f"**Open Ports ({len(data.get('ports', []))}):** {', '.join(map(str, data.get('ports', []))) or 'None'}",
+                    f"**Last Update:** {data.get('last_update', 'N/A')[:10]}",
+                ]
+                
+                # Vulnerabilities
+                if vulns := data.get('vulns', []):
+                    vuln_list = ', '.join(vulns[:10])
+                    if len(vulns) > 10:
+                        vuln_list += f" (+{len(vulns) - 10} more)"
+                    output.append(f"\n**⚠️ Vulnerabilities ({len(vulns)}):** {vuln_list}")
+                
+                # Tags
+                if tags := data.get('tags', []):
+                    output.append(f"**🏷️ Tags:** {', '.join(tags)}")
+                
+                output.append("\n*liforra.de | Liforras Utility bot | Powered by Shodan*")
+                
+                await self.bot.bot_send(message.channel, content="\n".join(output))
+                
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 401:
+                await self.bot.bot_send(message.channel, "❌ Invalid Shodan API key.")
+            elif e.response.status_code == 404:
+                await self.bot.bot_send(message.channel, f"❌ No information available for `{ip}` in Shodan.")
+            else:
+                await self.bot.bot_send(message.channel, f"❌ API Error: {e.response.status_code}")
+        except Exception as e:
+            await self.bot.bot_send(message.channel, f"❌ Error: {type(e).__name__}")
+
+    async def _shodan_search(self, message: discord.Message, query: str):
+        """Searches Shodan (admin only)."""
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    "https://api.shodan.io/shodan/host/search",
+                    params={"key": self.bot.config.shodan_api_key, "query": query},
+                    timeout=20
+                )
+                response.raise_for_status()
+                data = response.json()
+                
+                total = data.get('total', 0)
+                matches = data.get('matches', [])[:5]
+                
+                output = [
+                    f"🔍 **Shodan Search Results for `{query}`:**",
+                    f"**Total Results:** {total:,}",
+                    f""
+                ]
+                
+                for idx, match in enumerate(matches, 1):
+                    ip = match.get('ip_str', 'N/A')
+                    port = match.get('port', 'N/A')
+                    org = match.get('org', 'N/A')
+                    hostnames = ', '.join(match.get('hostnames', [])) or 'None'
+                    
+                    output.append(f"**{idx}. {ip}:{port}**")
+                    output.append(f"   Organization: {org}")
+                    output.append(f"   Hostnames: {hostnames}")
+                    output.append("")
+                
+                if total > 5:
+                    output.append(f"*Showing 5 of {total:,} results. View all at https://www.shodan.io/search?query={query.replace(' ', '+')}*")
+                
+                output.append("\n*liforra.de | Liforras Utility bot | Powered by Shodan*")
+                
+                await self.bot.bot_send(message.channel, content="\n".join(output))
+                
+        except httpx.HTTPStatusError as e:
+            await self.bot.bot_send(message.channel, f"❌ API Error: {e.response.status_code}")
+        except Exception as e:
+            await self.bot.bot_send(message.channel, f"❌ Error: {type(e).__name__}")
+
+    async def _shodan_count(self, message: discord.Message, query: str):
+        """Counts Shodan search results (admin only)."""
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    "https://api.shodan.io/shodan/host/count",
+                    params={"key": self.bot.config.shodan_api_key, "query": query},
+                    timeout=20
+                )
+                response.raise_for_status()
+                data = response.json()
+                
+                total = data.get('total', 0)
+                
+                output = [
+                    f"📊 **Shodan Count for `{query}`:**",
+                    f"**Total Results:** {total:,}",
+                    f"",
+                    f"*liforra.de | Liforras Utility bot | Powered by Shodan*"
+                ]
+                
+                await self.bot.bot_send(message.channel, content="\n".join(output))
+                
+        except httpx.HTTPStatusError as e:
+            await self.bot.bot_send(message.channel, f"❌ API Error: {e.response.status_code}")
+        except Exception as e:
+            await self.bot.bot_send(message.channel, f"❌ Error: {type(e).__name__}")
 
     async def command_alts(self, message: discord.Message, args: List[str]):
         """Alts database lookup (user-facing, IPs hidden by default)."""

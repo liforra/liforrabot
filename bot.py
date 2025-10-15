@@ -524,46 +524,150 @@ def register_slash_commands(tree, bot: "Bot"):
         embed.set_footer(text="liforra.de | Liforras Utility bot")
         await interaction.response.send_message(embed=embed, ephemeral=_ephemeral)
 
-    @tree.command(name="playerinfo", description="Get detailed information about a Minecraft player")
-    @bot.app_commands.describe(username="The Minecraft username to look up", _ephemeral="Show the response only to you (default: False)")
-    async def playerinfo_slash(interaction: discord.Interaction, username: str, _ephemeral: bool = False):
+    @tree.command(name="playerinfo", description="Get detailed information about a player")
+    @bot.app_commands.describe(
+        username="The username or ID to look up",
+        account_type="The platform/account type",
+        _ephemeral="Show the response only to you (default: False)"
+    )
+    @bot.app_commands.choices(account_type=[
+        bot.app_commands.Choice(name="Minecraft", value="minecraft"),
+        bot.app_commands.Choice(name="Steam", value="steam"),
+        bot.app_commands.Choice(name="Xbox", value="xbox")
+    ])
+    async def playerinfo_slash(
+        interaction: discord.Interaction, 
+        username: str, 
+        account_type: str = "minecraft",
+        _ephemeral: bool = False
+    ):
         if not await bot.check_authorization(interaction.user.id):
             await interaction.response.send_message(bot.oauth_handler.get_authorization_message(interaction.user.mention), ephemeral=True)
             return
         await interaction.response.defer(ephemeral=_ephemeral)
+        
+        # Validate account type
+        if account_type not in ["minecraft", "steam", "xbox"]:
+            await interaction.followup.send("❌ Invalid account type", ephemeral=_ephemeral)
+            return
+        
         try:
+            # For Steam, try to resolve vanity URL to Steam ID64 first
+            if account_type == "steam" and not username.isdigit():
+                if bot.config.steam_api_key:
+                    async with httpx.AsyncClient() as client:
+                        response = await client.get(
+                            "http://api.steampowered.com/ISteamUser/ResolveVanityURL/v0001/",
+                            params={"key": bot.config.steam_api_key, "vanityurl": username},
+                            timeout=10
+                        )
+                        data = response.json()
+                        if data.get("response", {}).get("success") == 1:
+                            username = data["response"]["steamid"]
+            
             async with httpx.AsyncClient() as client:
-                r = await client.get(f"https://playerdb.co/api/player/minecraft/{username}", headers={"User-Agent": "https://liforra.de"}, timeout=10)
-                r.raise_for_status()
-                data = r.json()
-            
-            if data.get("code") != "player.found":
-                await interaction.followup.send(f"❌ No player found for `{username}`.", ephemeral=_ephemeral)
-                return
-            
-            player = data["data"]["player"]
-            embed = discord.Embed(title=f"🎮 {discord.utils.escape_markdown(player['username'])}", url=f"https://namemc.com/profile/{player['username']}", color=0x2ECC71)
-            embed.set_thumbnail(url=player['avatar'])
-            embed.add_field(name="🆔 UUID", value=f"`{player['id']}`", inline=False)
-            
-            links = [f"[NameMC](https://namemc.com/profile/{player['username']})", f"[LabyMod](https://laby.net/@{player['username']})", f"[Skin](https://crafatar.com/skins/{player['raw_id']})"]
-            embed.add_field(name="🔗 Links", value=" • ".join(links), inline=False)
-            
-            if history := player.get('name_history'):
-                h_text = " → ".join([f"`{discord.utils.escape_markdown(n)}`" for n in history[:8]])
-                if len(history) > 8: 
-                    h_text += f"\n*... and {len(history) - 8} more*"
-                embed.add_field(name="📜 Name History", value=h_text, inline=False)
-
-            embed.set_image(url=f"https://crafatar.com/renders/body/{player['raw_id']}?overlay=true&size=512")
-            
-            if cached_at := player['meta'].get('cached_at'):
-                embed.set_footer(text="Powered by PlayerDB • Data cached")
-                embed.timestamp = datetime.fromtimestamp(cached_at)
-            else:
-                embed.set_footer(text="liforra.de | Liforras Utility bot | Powered by PlayerDB")
-
-            await interaction.followup.send(embed=embed, ephemeral=_ephemeral)
+                response = await client.get(
+                    f"https://playerdb.co/api/player/{account_type}/{username}",
+                    headers={"User-Agent": "https://liforra.de"},
+                    timeout=10
+                )
+                response.raise_for_status()
+                data = response.json()
+                
+                if data.get("code") != "player.found":
+                    await interaction.followup.send(
+                        f"❌ {account_type.capitalize()} account `{username}` not found",
+                        ephemeral=_ephemeral
+                    )
+                    return
+                
+                player = data["data"]["player"]
+                
+                # Create embed based on account type
+                if account_type == "minecraft":
+                    embed = discord.Embed(
+                        title=f"🎮 {player['username']}", 
+                        url=f"https://namemc.com/profile/{player['username']}", 
+                        color=0x2ECC71
+                    )
+                    embed.set_thumbnail(url=player['avatar'])
+                    embed.add_field(name="🆔 UUID", value=f"`{player['id']}`", inline=False)
+                    
+                    links = [
+                        f"[NameMC](https://namemc.com/profile/{player['username']})",
+                        f"[LabyMod](https://laby.net/@{player['username']})",
+                        f"[Skin](https://crafatar.com/skins/{player['raw_id']})"
+                    ]
+                    embed.add_field(name="🔗 Links", value=" • ".join(links), inline=False)
+                    
+                    if history := player.get('name_history'):
+                        h_text = " → ".join([f"`{discord.utils.escape_markdown(n)}`" for n in history[:8]])
+                        if len(history) > 8: 
+                            h_text += f"\n*... and {len(history) - 8} more*"
+                        embed.add_field(name="📜 Name History", value=h_text, inline=False)
+                    
+                    embed.set_image(url=f"https://crafatar.com/renders/body/{player['raw_id']}?overlay=true&size=512")
+                    
+                elif account_type == "steam":
+                    embed = discord.Embed(
+                        title=f"🎮 {player.get('username', 'Unknown')}", 
+                        url=player.get('profile_url', 'https://steamcommunity.com'),
+                        color=0x1B2838
+                    )
+                    if player.get('avatar'):
+                        embed.set_thumbnail(url=player['avatar'])
+                    
+                    if player.get('steamid'):
+                        embed.add_field(name="🔢 Steam ID64", value=f"`{player['steamid']}`", inline=True)
+                    if player.get('steam3_id'):
+                        embed.add_field(name="📝 Steam3 ID", value=f"`{player['steam3_id']}`", inline=True)
+                    
+                    if 'profile_visibility' in player:
+                        visibility_map = {3: "Public", 2: "Friends Only", 1: "Private"}
+                        embed.add_field(
+                            name="👁️ Profile", 
+                            value=visibility_map.get(player['profile_visibility'], "Unknown"),
+                            inline=True
+                        )
+                    
+                    if player.get('time_created'):
+                        from datetime import datetime
+                        created_time = datetime.fromtimestamp(player['time_created']).strftime('%Y-%m-%d')
+                        embed.add_field(name="📅 Account Created", value=created_time, inline=True)
+                    
+                    if player.get('country_code'):
+                        embed.add_field(name="🌍 Country", value=player['country_code'], inline=True)
+                    
+                elif account_type == "xbox":
+                    embed = discord.Embed(
+                        title=f"🎮 {player.get('username', player.get('gamertag', 'Unknown'))}", 
+                        color=0x107C10
+                    )
+                    if player.get('avatar'):
+                        embed.set_thumbnail(url=player['avatar'])
+                    
+                    if player.get('xuid'):
+                        embed.add_field(name="🔢 XUID", value=f"`{player['xuid']}`", inline=True)
+                    if player.get('gamerscore'):
+                        embed.add_field(name="🏆 Gamerscore", value=f"{player['gamerscore']:,}", inline=True)
+                    if player.get('account_tier'):
+                        embed.add_field(name="⭐ Tier", value=player['account_tier'], inline=True)
+                    if player.get('reputation'):
+                        embed.add_field(name="📊 Reputation", value=player['reputation'], inline=True)
+                    if player.get('bio'):
+                        bio = player['bio']
+                        if len(bio) > 100:
+                            bio = bio[:97] + "..."
+                        embed.add_field(name="📝 Bio", value=bio, inline=False)
+                
+                if cached_at := player.get('meta', {}).get('cached_at'):
+                    embed.set_footer(text="Powered by PlayerDB • Data cached")
+                    embed.timestamp = datetime.fromtimestamp(cached_at)
+                else:
+                    embed.set_footer(text="liforra.de | Liforras Utility bot | Powered by PlayerDB")
+                
+                await interaction.followup.send(embed=embed, ephemeral=_ephemeral)
+                
         except httpx.HTTPStatusError as e:
             await interaction.followup.send(f"❌ API Error: {e.response.status_code}", ephemeral=_ephemeral)
         except Exception as e:
@@ -693,12 +797,149 @@ def register_slash_commands(tree, bot: "Bot"):
         view = PaginationView(embeds, bot.discord) if len(embeds) > 1 else None
         await interaction.followup.send(embed=embeds[0], view=view, ephemeral=_ephemeral)
 
+    @tree.command(name="phone", description="Look up phone number information")
+    @bot.app_commands.describe(
+        number="Phone number with country code (e.g., +4917674905246)",
+        _ephemeral="Show the response only to you (default: False)"
+    )
+    async def phone_slash(interaction: discord.Interaction, number: str, _ephemeral: bool = False):
+        if not await bot.check_authorization(interaction.user.id):
+            await interaction.response.send_message(bot.oauth_handler.get_authorization_message(interaction.user.mention), ephemeral=True)
+            return
+        
+        is_allowed, wait_time = bot.check_rate_limit(interaction.user.id, "phone", limit=5, window=60)
+        if not is_allowed:
+            await interaction.response.send_message(f"⏱️ Rate limit exceeded. Please wait {wait_time} seconds.", ephemeral=True)
+            return
+        
+        await interaction.response.defer(ephemeral=_ephemeral)
+        
+        if not bot.config.numlookup_api_key:
+            await interaction.followup.send("❌ Phone lookup API key not configured.", ephemeral=_ephemeral)
+            return
+        
+        # Ensure phone number starts with +
+        if not number.startswith('+'):
+            number = '+' + number
+        
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    f"https://api.numlookupapi.com/v1/validate/{number}",
+                    headers={"apikey": bot.config.numlookup_api_key},
+                    timeout=10
+                )
+                response.raise_for_status()
+                data = response.json()
+                
+                if not data.get("valid"):
+                    await interaction.followup.send(f"❌ Invalid phone number: `{number}`", ephemeral=_ephemeral)
+                    return
+                
+                flag = COUNTRY_FLAGS.get(data.get("country_code", ""), "🌐")
+                
+                embed = discord.Embed(title="📱 Phone Number Information", color=0x3498DB, timestamp=datetime.now())
+                embed.add_field(name="Number", value=f"`{data.get('number', 'N/A')}`", inline=False)
+                embed.add_field(name="Local Format", value=f"`{data.get('local_format', 'N/A')}`", inline=True)
+                embed.add_field(name="International", value=f"`{data.get('international_format', 'N/A')}`", inline=True)
+                embed.add_field(name=f"{flag} Country", value=f"{data.get('country_name', 'N/A')} ({data.get('country_code', 'N/A')})", inline=False)
+                embed.add_field(name="📡 Carrier", value=data.get('carrier', 'N/A'), inline=True)
+                embed.add_field(name="📞 Line Type", value=data.get('line_type', 'N/A').title(), inline=True)
+                
+                if location := data.get('location'):
+                    embed.add_field(name="📍 Location", value=location, inline=False)
+                
+                embed.set_footer(text="liforra.de | Liforras Utility bot | Powered by NumLookupAPI")
+                await interaction.followup.send(embed=embed, ephemeral=_ephemeral)
+                
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 401:
+                await interaction.followup.send("❌ Invalid NumLookupAPI key.", ephemeral=_ephemeral)
+            elif e.response.status_code == 429:
+                await interaction.followup.send("⏱️ API rate limit exceeded.", ephemeral=_ephemeral)
+            else:
+                await interaction.followup.send(f"❌ API Error: {e.response.status_code}", ephemeral=_ephemeral)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Error: {type(e).__name__}", ephemeral=_ephemeral)
+
+    @tree.command(name="shodan", description="Get Shodan host information")
+    @bot.app_commands.describe(
+        ip="IP address to look up",
+        _ephemeral="Show the response only to you (default: False)"
+    )
+    async def shodan_slash(interaction: discord.Interaction, ip: str, _ephemeral: bool = False):
+        if not await bot.check_authorization(interaction.user.id):
+            await interaction.response.send_message(bot.oauth_handler.get_authorization_message(interaction.user.mention), ephemeral=True)
+            return
+        
+        await interaction.response.defer(ephemeral=_ephemeral)
+        
+        if not bot.config.shodan_api_key:
+            await interaction.followup.send("❌ Shodan API key not configured.", ephemeral=_ephemeral)
+            return
+        
+        if not is_valid_ip(ip):
+            await interaction.followup.send("❌ Invalid IP address format.", ephemeral=_ephemeral)
+            return
+        
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    f"https://api.shodan.io/shodan/host/{ip}",
+                    params={"key": bot.config.shodan_api_key},
+                    timeout=20
+                )
+                response.raise_for_status()
+                data = response.json()
+                
+                flag = COUNTRY_FLAGS.get(data.get("country_code", ""), "🌐")
+                
+                embed = discord.Embed(
+                    title=f"🔍 Shodan: {ip}",
+                    url=f"https://www.shodan.io/host/{ip}",
+                    color=0xE74C3C,
+                    timestamp=datetime.now()
+                )
+                
+                embed.add_field(name=f"{flag} Country", value=data.get('country_name', 'N/A'), inline=True)
+                embed.add_field(name="Organization", value=data.get('org', 'N/A'), inline=True)
+                embed.add_field(name="ISP", value=data.get('isp', 'N/A'), inline=True)
+                embed.add_field(name="ASN", value=data.get('asn', 'N/A'), inline=True)
+                
+                if hostnames := data.get('hostnames', []):
+                    embed.add_field(name="Hostnames", value=', '.join(hostnames[:5]) + (' ...' if len(hostnames) > 5 else ''), inline=False)
+                
+                if ports := data.get('ports', []):
+                    embed.add_field(name=f"Open Ports ({len(ports)})", value=', '.join(map(str, ports[:20])) + (' ...' if len(ports) > 20 else ''), inline=False)
+                
+                if vulns := data.get('vulns', []):
+                    vuln_text = ', '.join(vulns[:5])
+                    if len(vulns) > 5:
+                        vuln_text += f" (+{len(vulns) - 5} more)"
+                    embed.add_field(name=f"⚠️ Vulnerabilities ({len(vulns)})", value=vuln_text, inline=False)
+                
+                if tags := data.get('tags', []):
+                    embed.add_field(name="Tags", value=', '.join(tags), inline=False)
+                
+                embed.set_footer(text="liforra.de | Liforras Utility bot | Powered by Shodan")
+                await interaction.followup.send(embed=embed, ephemeral=_ephemeral)
+                
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 401:
+                await interaction.followup.send("❌ Invalid Shodan API key.", ephemeral=_ephemeral)
+            elif e.response.status_code == 404:
+                await interaction.followup.send(f"❌ No information available for `{ip}`.", ephemeral=_ephemeral)
+            else:
+                await interaction.followup.send(f"❌ API Error: {e.response.status_code}", ephemeral=_ephemeral)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Error: {type(e).__name__}", ephemeral=_ephemeral)
+
     @tree.command(name="help", description="Show available commands")
     @bot.app_commands.describe(_ephemeral="Show the response only to you (default: False)")
     async def help_slash(interaction: discord.Interaction, _ephemeral: bool = False):
         embed = discord.Embed(title="📚 Command Help", description="Available slash commands for this bot", color=0x3498DB, timestamp=datetime.now())
         embed.add_field(name="🎮 General", value="`/trump`, `/tech`, `/fact`, `/search`\n`/websites`, `/pings`, `/playerinfo`, `/namehistory`", inline=False)
-        embed.add_field(name="🌐 IP Tools", value="`/ip`, `/ipdbinfo`, `/ipdblist`, `/ipdbsearch`, `/ipdbstats`", inline=False)
+        embed.add_field(name="🌐 Network Tools", value="`/ip`, `/ipdbinfo`, `/ipdblist`, `/ipdbsearch`, `/ipdbstats`\n`/phone`, `/shodan`", inline=False)
         embed.add_field(name="👥 Alt Lookup", value="`/alts` (Rate limited: 2/min)", inline=False)
         if str(interaction.user.id) in bot.config.admin_ids:
             embed.add_field(name="⚙️ Admin", value="`/altsrefresh`, `/ipdbrefresh`, `/reloadconfig`\n`/configget`, `/configset`, `/configdebug`", inline=False)
@@ -769,7 +1010,7 @@ class Bot:
         self.message_cache = {}
         self.edit_history = {}
         
-        self.command_rate_limits = defaultdict(lambda: {"alts": [], "ip": [], "search": []})
+        self.command_rate_limits = defaultdict(lambda: {"alts": [], "ip": [], "search": [], "phone": []})
 
         self.user_commands = {
             "trump": self.user_commands_handler.command_trump,
@@ -781,6 +1022,8 @@ class Bot:
             "playerinfo": self.user_commands_handler.command_playerinfo,
             "namehistory": self.user_commands_handler.command_namehistory,
             "alts": self.user_commands_handler.command_alts,
+            "phone": self.user_commands_handler.command_phone,
+            "shodan": self.user_commands_handler.command_shodan,
         }
         self.admin_commands = {
             "reload-config": self.admin_commands_handler.command_reload_config,
