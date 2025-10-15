@@ -38,6 +38,7 @@ class ConfigManager:
         self.match_status = False
         self.sync_channel_id = ""
         self.sync_mention_id = ""
+        self.serpapi_key = ""
         
         # Database configuration for OAuth
         self.oauth_db_type = "json"
@@ -66,6 +67,7 @@ class ConfigManager:
                     "general.oauth-db-url",
                     "general.oauth-db-user",
                     "general.oauth-db-password",
+                    "general.serpapi-key",
                 ],
             )
             self.alts_refresh_url = general.get("alts-refresh-url", "")
@@ -90,6 +92,7 @@ class ConfigManager:
             self.default_clean_spigey = general.get("clean-spigey", False)
             self.sync_channel_id = general.get("sync-channel", "")
             self.sync_mention_id = general.get("sync-mention-id", "")
+            self.serpapi_key = general.get("serpapi-key", "")
             
             # OAuth database configuration
             self.oauth_db_type = general.get("oauth-db-type", "json")
@@ -118,6 +121,7 @@ class ConfigManager:
                     "general.oauth-db-url",
                     "general.oauth-db-user",
                     "general.oauth-db-password",
+                    "general.serpapi-key",
                 ],
                 "discord-status": "online",
                 "match-status": False,
@@ -138,6 +142,7 @@ class ConfigManager:
                 "allow-slurs": False,
                 "detect-ips": False,
                 "clean-spigey": False,
+                "serpapi-key": "",
                 "oauth-db-type": "json",
                 "oauth-db-url": "file:///home/liforra/bot-users.json",
                 "oauth-db-user": "",
