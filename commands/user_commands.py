@@ -4,6 +4,7 @@ import discord
 import httpx
 import asyncio
 import re
+import traceback
 from typing import List, Optional
 from utils.helpers import format_alt_name, format_alts_grid, is_valid_ip, is_valid_ipv6
 from utils.constants import COUNTRY_FLAGS
@@ -541,7 +542,6 @@ class UserCommands:
         username = args[0]
         account_type = args[1].lower() if len(args) > 1 else "minecraft"
         
-        # Validate account type
         if account_type not in ["minecraft", "steam", "xbox"]:
             return await self.bot.bot_send(
                 message.channel,
@@ -549,9 +549,6 @@ class UserCommands:
             )
         
         try:
-            output = [] # FIX: Initialize output to prevent UnboundLocalError
-            
-            # For Steam, try to resolve vanity URL to Steam ID64 first
             if account_type == "steam" and not username.isdigit():
                 if resolved_id := await self._resolve_steam_vanity_url(username):
                     username = resolved_id
@@ -577,18 +574,40 @@ class UserCommands:
                     )
                 
                 player = data["data"]["player"]
+                embed = None
                 
-                # Format output based on account type
                 if account_type == "minecraft":
-                    output = self._format_minecraft_info(player)
+                    embed = self._format_minecraft_info(player, self.bot.discord)
                 elif account_type == "steam":
-                    output = self._format_steam_info(player)
+                    embed = self._format_steam_info(player, self.bot.discord)
                 elif account_type == "xbox":
-                    output = self._format_xbox_info(player)
-                
-                if output:
-                    await self.bot.bot_send(message.channel, content="\n".join(output))
-                
+                    embed = self._format_xbox_info(player, self.bot.discord)
+
+                if embed:
+                    # For self-bots, convert embed to text
+                    if self.bot.token_type == "user":
+                        text_output = [f"**{embed.title}**"]
+                        if embed.description:
+                            text_output.append(embed.description)
+                        for field in embed.fields:
+                            text_output.append(f"\n**{field.name}**\n{field.value}")
+                        if embed.image.url:
+                            text_output.append(f"\nImage: {embed.image.url}")
+                        text_output.append(f"\n*{embed.footer.text}*")
+                        await self.bot.bot_send(message.channel, content="\n".join(text_output))
+                    else:
+                        # Bot accounts can send embeds (but we can't do that from a text command)
+                        # For now, let's just convert to text for simplicity
+                        text_output = [f"**{embed.title}**"]
+                        if embed.description:
+                            text_output.append(embed.description)
+                        for field in embed.fields:
+                            text_output.append(f"\n**{field.name}**\n{field.value}")
+                        if embed.image.url:
+                            text_output.append(f"\nImage: {embed.image.url}")
+                        text_output.append(f"\n*{embed.footer.text}*")
+                        await self.bot.bot_send(message.channel, content="\n".join(text_output))
+
         except httpx.HTTPStatusError as e:
             if account_type == "xbox" and 500 <= e.response.status_code < 600:
                 await self.bot.bot_send(
@@ -601,10 +620,9 @@ class UserCommands:
                     content=f"❌ API Error: {e.response.status_code}"
                 )
         except Exception as e:
-            await self.bot.bot_send(
-                message.channel,
-                content=f"❌ Error: {type(e).__name__}"
-            )
+            tb_str = ''.join(traceback.format_exception(type(e), e, e.__traceback__))
+            error_message = f"❌ **An unexpected error occurred:**\n```py\n{tb_str[:1800]}\n```"
+            await self.bot.bot_send(message.channel, content=error_message)
 
     async def _resolve_steam_vanity_url(self, vanity_url: str) -> Optional[str]:
         """Resolves a Steam vanity URL to a Steam ID64."""
@@ -626,148 +644,115 @@ class UserCommands:
             print(f"[Steam] Error resolving vanity URL: {e}")
         return None
 
-    def _format_minecraft_info(self, player: dict) -> list:
-        """Formats Minecraft player information."""
-        output = [
-            f"🎮 **Minecraft Player Info: {player['username']}**",
-            f"",
-            f"**🆔 UUID:** `{player['id']}`",
-            f"**🔢 Raw UUID:** `{player['raw_id']}`",
-            f"",
-            f"**🔗 Links:**",
-            f"• NameMC: https://namemc.com/profile/{player['username']}",
-            f"• LabyMod: https://laby.net/@{player['username']}",
-            f"• Avatar: {player['avatar']}",
-            f"• Skin (download): https://crafatar.com/skins/{player['raw_id']}",
-            f"• Full Body (with overlay): https://mc-heads.net/body/{player['raw_id']}/right",
+    def _format_minecraft_info(self, player: dict, discord_module) -> discord.Embed:
+        """Formats Minecraft player information into an embed."""
+        embed = discord_module.Embed(
+            title=f"🎮 {player['username']}", 
+            url=f"https://namemc.com/profile/{player['username']}", 
+            color=0x2ECC71
+        )
+        embed.set_thumbnail(url=player['avatar'])
+        embed.add_field(name="🆔 UUID", value=f"`{player['id']}`", inline=False)
+        
+        links = [
+            f"[NameMC](https://namemc.com/profile/{player['username']})",
+            f"[LabyMod](https://laby.net/@{player['username']})",
+            f"[Skin](https://crafatar.com/skins/{player['raw_id']})"
         ]
+        embed.add_field(name="🔗 Links", value=" • ".join(links), inline=False)
         
-        if player.get('name_history') and len(player['name_history']) > 0:
-            history_list = player['name_history'][:10]
-            history = " → ".join([f"`{name}`" for name in history_list])
-            if len(player['name_history']) > 10:
-                history += f" (+{len(player['name_history']) - 10} more)"
-            output.append(f"\n**📜 Name History:**\n{history}")
+        if history := player.get('name_history'):
+            h_text = " → ".join([f"`{discord_module.utils.escape_markdown(n)}`" for n in history[:8]])
+            if len(history) > 8: 
+                h_text += f"\n*... and {len(history) - 8} more*"
+            embed.add_field(name="📜 Name History", value=h_text, inline=False)
         
-        cached_at = player.get('meta', {}).get('cached_at')
-        if cached_at:
+        embed.set_image(url=f"https://crafatar.com/renders/body/{player['raw_id']}?overlay=true&size=512")
+        
+        if cached_at := player.get('meta', {}).get('cached_at'):
+            embed.set_footer(text="Powered by PlayerDB • Data cached")
             from datetime import datetime
-            cached_time = datetime.fromtimestamp(cached_at).strftime('%Y-%m-%d %H:%M:%S UTC')
-            output.append(f"\n*liforra.de | Liforras Utility bot | Powered by PlayerDB | Data cached at {cached_time}*")
+            embed.timestamp = datetime.fromtimestamp(cached_at)
         else:
-            output.append(f"\n*liforra.de | Liforras Utility bot | Powered by PlayerDB*")
+            embed.set_footer(text="liforra.de | Liforras Utility bot | Powered by PlayerDB")
         
-        return output
+        return embed
 
-    def _format_steam_info(self, player: dict) -> list:
-        """Formats Steam player information."""
+    def _format_steam_info(self, player: dict, discord_module) -> discord.Embed:
+        """Formats Steam player information into an embed."""
         meta = player.get('meta', {})
-        output = [
-            f"🎮 **Steam Player Info: {player.get('username', 'Unknown')}**",
-            f"",
-        ]
-        
-        # Steam ID (in various formats)
-        if player.get('id'):
-            output.append(f"**🆔 Steam ID:** `{player.get('id')}`")
-        if meta.get('steamid'):
-            output.append(f"**🔢 Steam ID64:** `{meta.get('steamid')}`")
-        if meta.get('steam2id_new'):
-            output.append(f"**📝 Steam2 ID:** `{meta.get('steam2id_new')}`")
-        if meta.get('steam3id'):
-            output.append(f"**📝 Steam3 ID:** `{meta.get('steam3id')}`")
-        
-        output.append(f"")
-        
-        # Profile info
+        embed = discord_module.Embed(
+            title=f"🎮 {player.get('username', 'Unknown')}", 
+            url=meta.get('profileurl', 'https://steamcommunity.com'),
+            color=0x1B2838
+        )
         if player.get('avatar'):
-            output.append(f"**🖼️ Avatar:** {player.get('avatar')}")
+            embed.set_thumbnail(url=player['avatar'])
         
-        if meta.get('profileurl'):
-            output.append(f"**🔗 Profile URL:** {meta.get('profileurl')}")
+        if meta.get('steamid'):
+            embed.add_field(name="🔢 Steam ID64", value=f"`{meta.get('steamid')}`", inline=True)
+        if meta.get('steam3id'):
+            embed.add_field(name="📝 Steam3 ID", value=f"`{meta.get('steam3id')}`", inline=True)
         
-        # Account status
         if meta.get('communityvisibilitystate'):
-            visibility = meta.get('communityvisibilitystate')
             visibility_map = {3: "Public", 2: "Friends Only", 1: "Private"}
-            output.append(f"**👁️ Profile:** {visibility_map.get(visibility, 'Unknown')}")
+            embed.add_field(
+                name="👁️ Profile", 
+                value=visibility_map.get(meta.get('communityvisibilitystate'), "Unknown"),
+                inline=True
+            )
         
         if meta.get('timecreated'):
             from datetime import datetime
             created_time = datetime.fromtimestamp(meta.get('timecreated')).strftime('%Y-%m-%d')
-            output.append(f"**📅 Account Created:** {created_time}")
+            embed.add_field(name="📅 Account Created", value=created_time, inline=True)
         
-        # Additional info
         if meta.get('loccountrycode'):
-            output.append(f"**🌍 Country:** {meta.get('loccountrycode')}")
+            embed.add_field(name="🌍 Country", value=meta.get('loccountrycode'), inline=True)
         
         if meta.get('realname'):
-            output.append(f"**👤 Real Name:** {meta.get('realname')}")
-        
-        cached_at = player.get('meta', {}).get('cached_at')
-        if cached_at:
-            from datetime import datetime
-            cached_time = datetime.fromtimestamp(cached_at).strftime('%Y-%m-%d %H:%M:%S UTC')
-            output.append(f"\n*liforra.de | Liforras Utility bot | Powered by PlayerDB | Data cached at {cached_time}*")
-        else:
-            output.append(f"\n*liforra.de | Liforras Utility bot | Powered by PlayerDB*")
-        
-        return output
+            embed.add_field(name="👤 Real Name", value=meta.get('realname'), inline=True)
 
-    def _format_xbox_info(self, player: dict) -> list:
-        """Formats Xbox player information."""
-        output = [
-            f"🎮 **Xbox Player Info: {player.get('username', 'Unknown')}**",
-            f"",
-        ]
-        
-        # Xbox IDs
-        if player.get('id'):
-            output.append(f"**🆔 Xbox User ID:** `{player['id']}`")
-        if player.get('xuid'):
-            output.append(f"**🔢 XUID:** `{player['xuid']}`")
-        
-        output.append(f"")
-        
-        # Profile info
+        if cached_at := player.get('meta', {}).get('cached_at'):
+            embed.set_footer(text="Powered by PlayerDB • Data cached")
+            from datetime import datetime
+            embed.timestamp = datetime.fromtimestamp(cached_at)
+        else:
+            embed.set_footer(text="liforra.de | Liforras Utility bot | Powered by PlayerDB")
+            
+        return embed
+
+    def _format_xbox_info(self, player: dict, discord_module) -> discord.Embed:
+        """Formats Xbox player information into an embed."""
+        embed = discord_module.Embed(
+            title=f"🎮 {player.get('username', player.get('gamertag', 'Unknown'))}", 
+            color=0x107C10
+        )
         if player.get('avatar'):
-            output.append(f"**🖼️ Avatar:** {player['avatar']}")
+            embed.set_thumbnail(url=player['avatar'])
         
-        if player.get('gamertag'):
-            output.append(f"**🎯 Gamertag:** {player['gamertag']}")
-        
-        # Stats
+        if player.get('xuid'):
+            embed.add_field(name="🔢 XUID", value=f"`{player['xuid']}`", inline=True)
         if player.get('gamerscore'):
-            output.append(f"**🏆 Gamerscore:** {player['gamerscore']:,}")
-        
+            embed.add_field(name="🏆 Gamerscore", value=f"{player['gamerscore']:,}", inline=True)
         if player.get('account_tier'):
-            output.append(f"**⭐ Account Tier:** {player['account_tier']}")
-        
+            embed.add_field(name="⭐ Tier", value=player['account_tier'], inline=True)
         if player.get('reputation'):
-            output.append(f"**📊 Reputation:** {player['reputation']}")
-        
-        # Additional info
-        if player.get('real_name'):
-            output.append(f"**👤 Real Name:** {player['real_name']}")
-        
+            embed.add_field(name="📊 Reputation", value=player['reputation'], inline=True)
         if player.get('bio'):
             bio = player['bio']
             if len(bio) > 100:
                 bio = bio[:97] + "..."
-            output.append(f"**📝 Bio:** {bio}")
-        
-        if player.get('location'):
-            output.append(f"**📍 Location:** {player['location']}")
-        
-        cached_at = player.get('meta', {}).get('cached_at')
-        if cached_at:
+            embed.add_field(name="📝 Bio", value=bio, inline=False)
+            
+        if cached_at := player.get('meta', {}).get('cached_at'):
+            embed.set_footer(text="Powered by PlayerDB • Data cached")
             from datetime import datetime
-            cached_time = datetime.fromtimestamp(cached_at).strftime('%Y-%m-%d %H:%M:%S UTC')
-            output.append(f"\n*liforra.de | Liforras Utility bot | Powered by PlayerDB | Data cached at {cached_time}*")
+            embed.timestamp = datetime.fromtimestamp(cached_at)
         else:
-            output.append(f"\n*liforra.de | Liforras Utility bot | Powered by PlayerDB*")
-        
-        return output
+            embed.set_footer(text="liforra.de | Liforras Utility bot | Powered by PlayerDB")
+            
+        return embed
 
     async def command_namehistory(self, message: discord.Message, args: List[str]):
         """Gets Minecraft name history from the API."""
@@ -805,7 +790,6 @@ class UserCommands:
                     last_seen = data["last_seen_at"][:19].replace("T", " ")
                     output.append(f"**Last Seen:** {last_seen} UTC")
                 
-                # Sort by id to ensure correct chronological order
                 history = sorted(data["history"], key=lambda x: x.get("id", 0))
                 
                 output.append(f"\n**Name Changes ({len(history)} recorded):**")
@@ -814,13 +798,8 @@ class UserCommands:
                     name = entry['name']
                     
                     if entry.get("changed_at") is None:
-                        # No timestamp means it's either original or current
-                        if idx == 1:
-                            label = "Original"
-                        else:
-                            label = "Current"
+                        label = "Original" if idx == 1 else "Current"
                     else:
-                        # Has timestamp - this is when they changed TO this name
                         label = entry["changed_at"][:10]
                     
                     output.append(f"{idx}. `{name}` - {label}")
@@ -835,21 +814,14 @@ class UserCommands:
                 await self.bot.bot_send(message.channel, content="\n".join(output))
                 
         except httpx.HTTPStatusError as e:
-            if e.response.status_code == 429:
-                await self.bot.bot_send(
-                    message.channel,
-                    content="⏱️ Rate limit exceeded. Please wait before trying again."
-                )
-            else:
-                await self.bot.bot_send(
-                    message.channel,
-                    content=f"❌ API Error: {e.response.status_code}"
-                )
-        except Exception as e:
             await self.bot.bot_send(
                 message.channel,
-                content=f"❌ Error: {type(e).__name__}"
+                content=f"❌ API Error: {e.response.status_code}"
             )
+        except Exception as e:
+            tb_str = ''.join(traceback.format_exception(type(e), e, e.__traceback__))
+            error_message = f"❌ **An unexpected error occurred:**\n```py\n{tb_str[:1800]}\n```"
+            await self.bot.bot_send(message.channel, content=error_message)
 
     async def command_phone(self, message: discord.Message, args: List[str]):
         """Looks up phone number information."""
@@ -867,7 +839,6 @@ class UserCommands:
                 content="❌ Phone lookup API key not configured."
             )
         
-        # Rate limit check
         is_allowed, wait_time = self.bot.check_rate_limit(message.author.id, "phone", limit=5, window=60)
         if not is_allowed:
             return await self.bot.bot_send(
@@ -876,8 +847,6 @@ class UserCommands:
             )
         
         phone_number = args[0]
-        
-        # Ensure phone number starts with +
         if not phone_number.startswith('+'):
             phone_number = '+' + phone_number
         
@@ -926,7 +895,9 @@ class UserCommands:
             else:
                 await self.bot.bot_send(message.channel, f"❌ API Error: {e.response.status_code}")
         except Exception as e:
-            await self.bot.bot_send(message.channel, f"❌ Error: {type(e).__name__}")
+            tb_str = ''.join(traceback.format_exception(type(e), e, e.__traceback__))
+            error_message = f"❌ **An unexpected error occurred:**\n```py\n{tb_str[:1800]}\n```"
+            await self.bot.bot_send(message.channel, content=error_message)
 
     async def command_shodan(self, message: discord.Message, args: List[str]):
         """Shodan search and host information."""
@@ -1008,11 +979,7 @@ class UserCommands:
                 
                 flag = COUNTRY_FLAGS.get(data.get("country_code", ""), "🌐")
                 
-                # Format IP display
-                if is_valid_ipv6(ip):
-                    ip_header = f"**Shodan Host Information for `{ip}`:**"
-                else:
-                    ip_header = f"**Shodan Host Information for [{ip}](<https://www.shodan.io/host/{ip}>):**"
+                ip_header = f"**Shodan Host Information for [{ip}](<https://www.shodan.io/host/{ip}>):**" if not is_valid_ipv6(ip) else f"**Shodan Host Information for `{ip}`:**"
                 
                 output = [
                     ip_header,
@@ -1026,14 +993,12 @@ class UserCommands:
                     f"**Last Update:** {data.get('last_update', 'N/A')[:10]}",
                 ]
                 
-                # Vulnerabilities
                 if vulns := data.get('vulns', []):
                     vuln_list = ', '.join(vulns[:10])
                     if len(vulns) > 10:
                         vuln_list += f" (+{len(vulns) - 10} more)"
                     output.append(f"\n**⚠️ Vulnerabilities ({len(vulns)}):** {vuln_list}")
                 
-                # Tags
                 if tags := data.get('tags', []):
                     output.append(f"**🏷️ Tags:** {', '.join(tags)}")
                 
@@ -1049,7 +1014,9 @@ class UserCommands:
             else:
                 await self.bot.bot_send(message.channel, f"❌ API Error: {e.response.status_code}")
         except Exception as e:
-            await self.bot.bot_send(message.channel, f"❌ Error: {type(e).__name__}")
+            tb_str = ''.join(traceback.format_exception(type(e), e, e.__traceback__))
+            error_message = f"❌ **An unexpected error occurred:**\n```py\n{tb_str[:1800]}\n```"
+            await self.bot.bot_send(message.channel, content=error_message)
 
     async def _shodan_search(self, message: discord.Message, query: str):
         """Searches Shodan (admin only)."""
@@ -1090,10 +1057,10 @@ class UserCommands:
                 
                 await self.bot.bot_send(message.channel, content="\n".join(output))
                 
-        except httpx.HTTPStatusError as e:
-            await self.bot.bot_send(message.channel, f"❌ API Error: {e.response.status_code}")
         except Exception as e:
-            await self.bot.bot_send(message.channel, f"❌ Error: {type(e).__name__}")
+            tb_str = ''.join(traceback.format_exception(type(e), e, e.__traceback__))
+            error_message = f"❌ **An unexpected error occurred:**\n```py\n{tb_str[:1800]}\n```"
+            await self.bot.bot_send(message.channel, content=error_message)
 
     async def _shodan_count(self, message: discord.Message, query: str):
         """Counts Shodan search results (admin only)."""
@@ -1118,10 +1085,10 @@ class UserCommands:
                 
                 await self.bot.bot_send(message.channel, content="\n".join(output))
                 
-        except httpx.HTTPStatusError as e:
-            await self.bot.bot_send(message.channel, f"❌ API Error: {e.response.status_code}")
         except Exception as e:
-            await self.bot.bot_send(message.channel, f"❌ Error: {type(e).__name__}")
+            tb_str = ''.join(traceback.format_exception(type(e), e, e.__traceback__))
+            error_message = f"❌ **An unexpected error occurred:**\n```py\n{tb_str[:1800]}\n```"
+            await self.bot.bot_send(message.channel, content=error_message)
 
     async def command_alts(self, message: discord.Message, args: List[str]):
         """Alts database lookup (user-facing, IPs hidden by default)."""
@@ -1147,7 +1114,6 @@ class UserCommands:
             return await self.bot.bot_send(message.channel, content=stats)
 
         elif subcommand == "list":
-            from utils.helpers import is_valid_ipv4, is_valid_ipv6
             
             users = sorted(
                 [
@@ -1179,7 +1145,6 @@ class UserCommands:
             await self.bot.bot_send(message.channel, content="\n".join(output))
 
         else:
-            # Username lookup - IPs hidden for non-admins
             search_term = args[0]
             found_user = None
 
@@ -1210,10 +1175,8 @@ class UserCommands:
             alts = sorted(list(data.get("alts", set())))
             ips = sorted(list(data.get("ips", set())))
             
-            # Check if admin
             is_admin = str(message.author.id) in self.bot.config.admin_ids
 
-            # Calculate most common non-VPN country
             country_counts = {}
             has_used_vpn = False
             
@@ -1221,26 +1184,21 @@ class UserCommands:
                 if ip in self.bot.ip_handler.ip_geo_data:
                     geo = self.bot.ip_handler.ip_geo_data[ip]
                     
-                    # Check if VPN/Proxy/Hosting
                     vpn_provider = self.bot.ip_handler.detect_vpn_provider(geo.get("isp", ""), geo.get("org", ""))
                     is_vpn = vpn_provider or geo.get("proxy") or geo.get("hosting")
                     
                     if is_vpn:
                         has_used_vpn = True
                     else:
-                        # Count non-VPN countries (discourage USA)
                         country = geo.get("country")
                         country_code = geo.get("countryCode")
                         if country and country_code:
-                            # Reduce USA weight by treating it as 0.3 of a count
                             weight = 0.3 if country_code == "US" else 1.0
                             country_counts[country] = country_counts.get(country, 0) + weight
             
-            # Find most common country
             likely_location = None
             if country_counts:
                 likely_location = max(country_counts, key=country_counts.get)
-                # Get flag for the country
                 for ip in ips:
                     if ip in self.bot.ip_handler.ip_geo_data:
                         geo = self.bot.ip_handler.ip_geo_data[ip]
@@ -1263,7 +1221,6 @@ class UserCommands:
                 output.append(f"\n**Alts ({len(alts)}):**")
                 output.extend(grid_lines)
 
-            # Show IP count but hide actual IPs for non-admins
             if ips:
                 if is_admin:
                     output.append(f"\n**IPs ({len(ips)}):**")

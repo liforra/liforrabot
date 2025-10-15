@@ -4,6 +4,7 @@ import asyncio
 import re
 import json
 import logging
+import traceback
 from pathlib import Path
 from typing import Dict, Optional, Union, List
 from datetime import datetime, timedelta
@@ -48,27 +49,22 @@ class PaginationView:
     def _create_view(self):
         """Creates the discord.ui.View with buttons."""
         
-        # First page button
         first_btn = self.discord.ui.Button(label="⏮️", style=self.discord.ButtonStyle.gray)
         first_btn.callback = self._go_to_page_callback(0)
         self.view.add_item(first_btn)
         
-        # Previous page button
         prev_btn = self.discord.ui.Button(label="◀️", style=self.discord.ButtonStyle.primary)
         prev_btn.callback = self._go_to_page_callback(self.current_page - 1)
         self.view.add_item(prev_btn)
         
-        # Next page button
         next_btn = self.discord.ui.Button(label="▶️", style=self.discord.ButtonStyle.primary)
         next_btn.callback = self._go_to_page_callback(self.current_page + 1)
         self.view.add_item(next_btn)
         
-        # Last page button
         last_btn = self.discord.ui.Button(label="⏭️", style=self.discord.ButtonStyle.gray)
         last_btn.callback = self._go_to_page_callback(len(self.embeds) - 1)
         self.view.add_item(last_btn)
         
-        # Delete button
         delete_btn = self.discord.ui.Button(label="🗑️", style=self.discord.ButtonStyle.danger)
         delete_btn.callback = self._delete_callback
         self.view.add_item(delete_btn)
@@ -77,13 +73,11 @@ class PaginationView:
     
     def _update_buttons(self):
         """Updates button states and callbacks based on current page."""
-        # Update callbacks to point to the correct new pages
         self.view.children[0].callback = self._go_to_page_callback(0)
         self.view.children[1].callback = self._go_to_page_callback(self.current_page - 1)
         self.view.children[2].callback = self._go_to_page_callback(self.current_page + 1)
         self.view.children[3].callback = self._go_to_page_callback(len(self.embeds) - 1)
 
-        # Update disabled states
         self.view.children[0].disabled = self.current_page == 0
         self.view.children[1].disabled = self.current_page == 0
         self.view.children[2].disabled = self.current_page >= len(self.embeds) - 1
@@ -91,7 +85,6 @@ class PaginationView:
 
     def _go_to_page_callback(self, page_number: int):
         async def callback(interaction: discord.Interaction):
-            # Clamp page number to valid range
             self.current_page = max(0, min(page_number, len(self.embeds) - 1))
             self._update_buttons()
             await interaction.response.edit_message(embed=self.embeds[self.current_page], view=self.view)
@@ -102,10 +95,9 @@ class PaginationView:
 
 
 # =================================================================================
-# START OF SLASH COMMAND REGISTRATION
+# SLASH COMMAND REGISTRATION
 # =================================================================================
 
-# Language configurations for search
 LANGUAGE_MAP = {
     "Germany": {"location": "Hamburg, Germany", "hl": "de", "gl": "de", "google_domain": "google.de"},
     "United States": {"location": "Austin, Texas, United States", "hl": "en", "gl": "us", "google_domain": "google.com"},
@@ -116,7 +108,7 @@ def register_slash_commands(tree, bot: "Bot"):
     """Registers all slash commands for the bot."""
     
     import httpx
-    from utils.helpers import format_alt_name, format_alts_grid, is_valid_ip, is_valid_ipv6
+    from utils.helpers import format_alt_name, is_valid_ip
     from utils.constants import COUNTRY_FLAGS
 
     # ==================== USER COMMANDS ====================
@@ -224,18 +216,8 @@ def register_slash_commands(tree, bot: "Bot"):
             return
         
         try:
-            # Get region settings
             region_settings = LANGUAGE_MAP.get(_language, LANGUAGE_MAP["Germany"])
-            
-            # Build parameters for SerpAPI
-            params = {
-                "q": query,
-                "location": region_settings["location"],
-                "hl": region_settings["hl"],
-                "gl": region_settings["gl"],
-                "google_domain": region_settings["google_domain"],
-                "api_key": bot.config.serpapi_key
-            }
+            params = { "q": query, "location": region_settings["location"], "hl": region_settings["hl"], "gl": region_settings["gl"], "google_domain": region_settings["google_domain"], "api_key": bot.config.serpapi_key }
             
             async with httpx.AsyncClient() as client:
                 response = await client.get("https://serpapi.com/search.json", params=params, timeout=20)
@@ -246,58 +228,33 @@ def register_slash_commands(tree, bot: "Bot"):
                 await interaction.followup.send(f"❌ API Error: {data['error']}", ephemeral=_ephemeral)
                 return
 
-            embeds = []
-            organic_results = data.get("organic_results", [])
-            
-            # --- Build Page 1 (Summary) ---
-            summary_embed = discord.Embed(
-                title="🔍 Google Search", 
-                description=f"**Query:** `{query}`", 
-                color=0x4285F4, 
-                url=data.get("search_metadata", {}).get("google_url")
-            )
+            embeds, organic_results = [], data.get("organic_results", [])
+            summary_embed = discord.Embed(title="🔍 Google Search", description=f"**Query:** `{query}`", color=0x4285F4, url=data.get("search_metadata", {}).get("google_url"))
             summary_embed.set_thumbnail(url="https://i.imgur.com/tEChjwx.png")
 
             if (info := data.get("search_information")) and (total_results := info.get("total_results")):
                 summary_embed.add_field(name="📊 Stats", value=f"{total_results:,} results\n({info.get('time_taken_displayed', 'N/A')}s)", inline=True)
-            
             summary_embed.add_field(name="📍 Region", value=_language, inline=True)
 
-            # Answer box or quick answer
             if (answer_box := data.get("answer_box")) and (answer := answer_box.get("answer")):
                 summary_embed.add_field(name="💡 Quick Answer", value=answer[:1000] + ("..." if len(answer) > 1000 else ""), inline=False)
             elif (kg := data.get("knowledge_graph")) and (kg_title := kg.get("title")):
-                kg_text = f"**{kg_title}**"
-                if kg_type := kg.get("type"):
-                    kg_text += f" _{kg_type}_"
-                if kg_desc := kg.get("description"):
-                    kg_text += f"\n{kg_desc[:200] + ('...' if len(kg_desc) > 200 else '')}"
+                kg_text = f"**{kg_title}**" + (f" _{kg_type}_" if (kg_type := kg.get("type")) else "") + (f"\n{kg_desc[:200] + ('...' if len(kg_desc) > 200 else '')}" if (kg_desc := kg.get("description")) else "")
                 summary_embed.add_field(name="📚 Knowledge Graph", value=kg_text, inline=False)
             
             if organic_results:
                 top_hit = organic_results[0]
-                title = top_hit.get('title', 'No Title')
-                link = top_hit.get('link', '#')
-                snippet = top_hit.get('snippet', 'No snippet available.')
-                value = f"**[{title}]({link})**\n_{snippet[:150] + ('...' if len(snippet) > 150 else '')}_"
+                value = f"**[{top_hit.get('title', 'No Title')}]({top_hit.get('link', '#')})**\n_{top_hit.get('snippet', 'No snippet available.')[:150] + ('...' if len(top_hit.get('snippet', 'No snippet available.')) > 150 else '')}_"
                 summary_embed.add_field(name="🏆 Top Result", value=value, inline=False)
-            
             embeds.append(summary_embed)
 
-            # --- Build Subsequent Pages (Organic Results) ---
             if organic_results:
-                results_per_page = 3
-                for i in range(0, len(organic_results), results_per_page):
-                    chunk = organic_results[i : i + results_per_page]
-                    page_num = (i // results_per_page) + 1
+                for i in range(0, len(organic_results), 3):
+                    chunk, page_num = organic_results[i : i + 3], (i // 3) + 1
                     page_embed = discord.Embed(title=f"Search Results (Page {page_num})", color=0x34A853)
-                    
                     for result in chunk:
-                        title = result.get('title', 'No Title')
-                        snippet = result.get('snippet', 'No snippet available.')
-                        link = result.get('link', '#')
-                        value_text = f"_{snippet[:200] + ('...' if len(snippet) > 200 else '')}_\n**[Read More]({link})**"
-                        page_embed.add_field(name=f"📄 {title}", value=value_text, inline=False)
+                        value_text = f"_{result.get('snippet', 'No snippet available.')[:200] + ('...' if len(result.get('snippet', 'No snippet available.')) > 200 else '')}_\n**[Read More]({result.get('link', '#')})**"
+                        page_embed.add_field(name=f"📄 {result.get('title', 'No Title')}", value=value_text, inline=False)
                     embeds.append(page_embed)
 
             if not any(embed.fields or embed.description for embed in embeds):
@@ -311,10 +268,7 @@ def register_slash_commands(tree, bot: "Bot"):
             await interaction.followup.send(embed=embeds[0], view=view, ephemeral=_ephemeral)
 
         except httpx.HTTPStatusError as e:
-            if e.response.status_code == 401: 
-                await interaction.followup.send("❌ Invalid SerpAPI key.", ephemeral=_ephemeral)
-            else: 
-                await interaction.followup.send(f"❌ API Error: {e.response.status_code}", ephemeral=_ephemeral)
+            await interaction.followup.send(f"❌ API Error: {e.response.status_code}", ephemeral=_ephemeral)
         except Exception as e:
             await interaction.followup.send(f"❌ An unexpected error occurred: {type(e).__name__}", ephemeral=_ephemeral)
 
@@ -435,11 +389,9 @@ def register_slash_commands(tree, bot: "Bot"):
         
         ts = int(datetime.fromisoformat(geo.get("last_updated")).timestamp())
         embed.add_field(name="Last Updated", value=f"<t:{ts}:R>")
-
         loc = ", ".join(filter(None, [geo.get('city'), geo.get('regionName'), f"{geo.get('country')} ({geo.get('countryCode')})"]))
         if loc: 
             embed.add_field(name="📍 Location", value=loc, inline=False)
-
         net = "\n".join(filter(None, [f"**ISP:** {geo.get('isp')}" if geo.get('isp') else None, f"**Org:** {geo.get('org')}" if geo.get('org') else None]))
         if net: 
             embed.add_field(name="🌐 Network", value=net, inline=False)
@@ -546,24 +498,10 @@ def register_slash_commands(tree, bot: "Bot"):
             return
         await interaction.response.defer(ephemeral=_ephemeral)
         
-        # Validate account type
-        if account_type not in ["minecraft", "steam", "xbox"]:
-            await interaction.followup.send("❌ Invalid account type", ephemeral=_ephemeral)
-            return
-        
         try:
-            # For Steam, try to resolve vanity URL to Steam ID64 first
             if account_type == "steam" and not username.isdigit():
-                if bot.config.steam_api_key:
-                    async with httpx.AsyncClient() as client:
-                        response = await client.get(
-                            "http://api.steampowered.com/ISteamUser/ResolveVanityURL/v0001/",
-                            params={"key": bot.config.steam_api_key, "vanityurl": username},
-                            timeout=10
-                        )
-                        data = response.json()
-                        if data.get("response", {}).get("success") == 1:
-                            username = data["response"]["steamid"]
+                if resolved_id := await bot.user_commands_handler._resolve_steam_vanity_url(username):
+                    username = resolved_id
             
             async with httpx.AsyncClient() as client:
                 response = await client.get(
@@ -575,109 +513,35 @@ def register_slash_commands(tree, bot: "Bot"):
                 data = response.json()
                 
                 if data.get("code") != "player.found":
-                    await interaction.followup.send(
+                    return await interaction.followup.send(
                         f"❌ {account_type.capitalize()} account `{username}` not found",
                         ephemeral=_ephemeral
                     )
-                    return
                 
                 player = data["data"]["player"]
-                meta = player.get('meta', {})
-                embed = None # FIX: Initialize embed to prevent UnboundLocalError
+                embed = None
                 
-                # Create embed based on account type
                 if account_type == "minecraft":
-                    embed = discord.Embed(
-                        title=f"🎮 {player['username']}", 
-                        url=f"https://namemc.com/profile/{player['username']}", 
-                        color=0x2ECC71
-                    )
-                    embed.set_thumbnail(url=player['avatar'])
-                    embed.add_field(name="🆔 UUID", value=f"`{player['id']}`", inline=False)
-                    
-                    links = [
-                        f"[NameMC](https://namemc.com/profile/{player['username']})",
-                        f"[LabyMod](https://laby.net/@{player['username']})",
-                        f"[Skin](https://crafatar.com/skins/{player['raw_id']})"
-                    ]
-                    embed.add_field(name="🔗 Links", value=" • ".join(links), inline=False)
-                    
-                    if history := player.get('name_history'):
-                        h_text = " → ".join([f"`{discord.utils.escape_markdown(n)}`" for n in history[:8]])
-                        if len(history) > 8: 
-                            h_text += f"\n*... and {len(history) - 8} more*"
-                        embed.add_field(name="📜 Name History", value=h_text, inline=False)
-                    
-                    embed.set_image(url=f"https://crafatar.com/renders/body/{player['raw_id']}?overlay=true&size=512")
-                    
+                    embed = bot.user_commands_handler._format_minecraft_info(player, bot.discord)
                 elif account_type == "steam":
-                    embed = discord.Embed(
-                        title=f"🎮 {player.get('username', 'Unknown')}", 
-                        url=meta.get('profileurl', 'https://steamcommunity.com'),
-                        color=0x1B2838
-                    )
-                    if player.get('avatar'):
-                        embed.set_thumbnail(url=player['avatar'])
-                    
-                    if meta.get('steamid'):
-                        embed.add_field(name="🔢 Steam ID64", value=f"`{meta.get('steamid')}`", inline=True)
-                    if meta.get('steam3id'):
-                        embed.add_field(name="📝 Steam3 ID", value=f"`{meta.get('steam3id')}`", inline=True)
-                    
-                    if meta.get('communityvisibilitystate'):
-                        visibility_map = {3: "Public", 2: "Friends Only", 1: "Private"}
-                        embed.add_field(
-                            name="👁️ Profile", 
-                            value=visibility_map.get(meta.get('communityvisibilitystate'), "Unknown"),
-                            inline=True
-                        )
-                    
-                    if meta.get('timecreated'):
-                        from datetime import datetime
-                        created_time = datetime.fromtimestamp(meta.get('timecreated')).strftime('%Y-%m-%d')
-                        embed.add_field(name="📅 Account Created", value=created_time, inline=True)
-                    
-                    if meta.get('loccountrycode'):
-                        embed.add_field(name="🌍 Country", value=meta.get('loccountrycode'), inline=True)
-                    
+                    embed = bot.user_commands_handler._format_steam_info(player, bot.discord)
                 elif account_type == "xbox":
-                    embed = discord.Embed(
-                        title=f"🎮 {player.get('username', player.get('gamertag', 'Unknown'))}", 
-                        color=0x107C10
-                    )
-                    if player.get('avatar'):
-                        embed.set_thumbnail(url=player['avatar'])
-                    
-                    if player.get('xuid'):
-                        embed.add_field(name="🔢 XUID", value=f"`{player['xuid']}`", inline=True)
-                    if player.get('gamerscore'):
-                        embed.add_field(name="🏆 Gamerscore", value=f"{player['gamerscore']:,}", inline=True)
-                    if player.get('account_tier'):
-                        embed.add_field(name="⭐ Tier", value=player['account_tier'], inline=True)
-                    if player.get('reputation'):
-                        embed.add_field(name="📊 Reputation", value=player['reputation'], inline=True)
-                    if player.get('bio'):
-                        bio = player['bio']
-                        if len(bio) > 100:
-                            bio = bio[:97] + "..."
-                        embed.add_field(name="📝 Bio", value=bio, inline=False)
-                
+                    embed = bot.user_commands_handler._format_xbox_info(player, bot.discord)
+
                 if embed:
-                    if cached_at := meta.get('cached_at'):
-                        embed.set_footer(text="Powered by PlayerDB • Data cached")
-                        embed.timestamp = datetime.fromtimestamp(cached_at)
-                    else:
-                        embed.set_footer(text="liforra.de | Liforras Utility bot | Powered by PlayerDB")
-                    
                     await interaction.followup.send(embed=embed, ephemeral=_ephemeral)
-                
+                else: # Fallback in case embed creation fails
+                    await interaction.followup.send("❌ Failed to generate player info embed.", ephemeral=_ephemeral)
+
         except httpx.HTTPStatusError as e:
             if account_type == "xbox" and 500 <= e.response.status_code < 600:
                 await interaction.followup.send(f"❌ The Xbox lookup API returned an error ({e.response.status_code}). It might be temporarily down.", ephemeral=_ephemeral)
             else:
                 await interaction.followup.send(f"❌ API Error: {e.response.status_code}", ephemeral=_ephemeral)
         except Exception as e:
-            await interaction.followup.send(f"❌ Error: {type(e).__name__}", ephemeral=_ephemeral)
+            tb_str = ''.join(traceback.format_exception(type(e), e, e.__traceback__))
+            error_message = f"❌ **An unexpected error occurred:**\n```py\n{tb_str[:1800]}\n```"
+            await interaction.followup.send(error_message, ephemeral=_ephemeral)
 
     @tree.command(name="namehistory", description="Get complete Minecraft name change history")
     @bot.app_commands.describe(username="The Minecraft username to look up", _ephemeral="Show the response only to you (default: False)")
@@ -702,14 +566,12 @@ def register_slash_commands(tree, bot: "Bot"):
             if uuid := data.get("uuid"): 
                 embed.add_field(name="🆔 UUID", value=f"`{uuid}`", inline=False)
             
-            # Add last seen with Discord timestamp
             if last_seen_str := data.get("last_seen_at"):
                 try:
                     last_seen_dt = datetime.fromisoformat(last_seen_str.replace("Z", "+00:00"))
                     last_seen_ts = int(last_seen_dt.timestamp())
                     embed.add_field(name="👁️ Last Seen", value=f"<t:{last_seen_ts}:R>", inline=False)
-                except:
-                    pass
+                except: pass
             
             history = sorted(data["history"], key=lambda x: x.get("id", 0))
             changes_text = []
@@ -731,7 +593,9 @@ def register_slash_commands(tree, bot: "Bot"):
         except httpx.HTTPStatusError as e:
             await interaction.followup.send(f"❌ API Error: {e.response.status_code}", ephemeral=_ephemeral)
         except Exception as e:
-            await interaction.followup.send(f"❌ Error: {type(e).__name__}", ephemeral=_ephemeral)
+            tb_str = ''.join(traceback.format_exception(type(e), e, e.__traceback__))
+            error_message = f"❌ **An unexpected error occurred:**\n```py\n{tb_str[:1800]}\n```"
+            await interaction.followup.send(error_message, ephemeral=_ephemeral)
 
     @tree.command(name="alts", description="Look up a user's known alts")
     @bot.app_commands.describe(
@@ -769,31 +633,25 @@ def register_slash_commands(tree, bot: "Bot"):
         
         is_admin = str(interaction.user.id) in bot.config.admin_ids
         show_ips = _ip and is_admin
-
         embeds = []
         
-        # Main Info Embed with Discord timestamps
         first_seen_ts = int(datetime.fromisoformat(data.get("first_seen")).timestamp())
         last_updated_ts = int(datetime.fromisoformat(data.get("last_updated")).timestamp())
         
-        info_embed = discord.Embed(
-            title=f"👥 Alt Report for {discord.utils.escape_markdown(found_user)}",
-            color=0xE74C3C,
-            description=f"First Seen: <t:{first_seen_ts}:F>\nLast Updated: <t:{last_updated_ts}:R>"
-        )
+        info_embed = discord.Embed(title=f"👥 Alt Report for {discord.utils.escape_markdown(found_user)}", color=0xE74C3C, description=f"First Seen: <t:{first_seen_ts}:F>\nLast Updated: <t:{last_updated_ts}:R>")
         embeds.append(info_embed)
 
         if alts:
-            alt_pages = [alts[i:i + 20] for i in range(0, len(alts), 20)]
-            for i, page in enumerate(alt_pages):
-                embed = discord.Embed(title=f"Known Alts ({len(alts)} total) - Page {i+1}", color=0xE74C3C)
+            for i in range(0, len(alts), 20):
+                page = alts[i:i + 20]
+                embed = discord.Embed(title=f"Known Alts ({len(alts)} total) - Page {(i//20)+1}", color=0xE74C3C)
                 embed.description = "\n".join([format_alt_name(alt) for alt in page])
                 embeds.append(embed)
         
         if show_ips and ips:
-            ip_pages = [ips[i:i + 15] for i in range(0, len(ips), 15)]
-            for i, page in enumerate(ip_pages):
-                embed = discord.Embed(title=f"Known IPs ({len(ips)} total) - Page {i+1}", color=0xE74C3C)
+            for i in range(0, len(ips), 15):
+                page = ips[i:i + 15]
+                embed = discord.Embed(title=f"Known IPs ({len(ips)} total) - Page {(i//15)+1}", color=0xE74C3C)
                 embed.description = "\n".join([bot.ip_handler.format_ip_with_geo(ip) for ip in page])
                 embeds.append(embed)
 
@@ -804,10 +662,7 @@ def register_slash_commands(tree, bot: "Bot"):
         await interaction.followup.send(embed=embeds[0], view=view, ephemeral=_ephemeral)
 
     @tree.command(name="phone", description="Look up phone number information")
-    @bot.app_commands.describe(
-        number="Phone number with country code (e.g., +4917674905246)",
-        _ephemeral="Show the response only to you (default: False)"
-    )
+    @bot.app_commands.describe(number="Phone number with country code (e.g., +4917674905246)", _ephemeral="Show the response only to you (default: False)")
     async def phone_slash(interaction: discord.Interaction, number: str, _ephemeral: bool = False):
         if not await bot.check_authorization(interaction.user.id):
             await interaction.response.send_message(bot.oauth_handler.get_authorization_message(interaction.user.mention), ephemeral=True)
@@ -824,17 +679,11 @@ def register_slash_commands(tree, bot: "Bot"):
             await interaction.followup.send("❌ Phone lookup API key not configured.", ephemeral=_ephemeral)
             return
         
-        # Ensure phone number starts with +
-        if not number.startswith('+'):
-            number = '+' + number
+        number = '+' + number if not number.startswith('+') else number
         
         try:
             async with httpx.AsyncClient() as client:
-                response = await client.get(
-                    f"https://api.numlookupapi.com/v1/validate/{number}",
-                    headers={"apikey": bot.config.numlookup_api_key},
-                    timeout=10
-                )
+                response = await client.get(f"https://api.numlookupapi.com/v1/validate/{number}", headers={"apikey": bot.config.numlookup_api_key}, timeout=10)
                 response.raise_for_status()
                 data = response.json()
                 
@@ -843,7 +692,6 @@ def register_slash_commands(tree, bot: "Bot"):
                     return
                 
                 flag = COUNTRY_FLAGS.get(data.get("country_code", ""), "🌐")
-                
                 embed = discord.Embed(title="📱 Phone Number Information", color=0x3498DB, timestamp=datetime.now())
                 embed.add_field(name="Number", value=f"`{data.get('number', 'N/A')}`", inline=False)
                 embed.add_field(name="Local Format", value=f"`{data.get('local_format', 'N/A')}`", inline=True)
@@ -851,28 +699,22 @@ def register_slash_commands(tree, bot: "Bot"):
                 embed.add_field(name=f"{flag} Country", value=f"{data.get('country_name', 'N/A')} ({data.get('country_code', 'N/A')})", inline=False)
                 embed.add_field(name="📡 Carrier", value=data.get('carrier', 'N/A'), inline=True)
                 embed.add_field(name="📞 Line Type", value=data.get('line_type', 'N/A').title(), inline=True)
-                
                 if location := data.get('location'):
                     embed.add_field(name="📍 Location", value=location, inline=False)
-                
                 embed.set_footer(text="liforra.de | Liforras Utility bot | Powered by NumLookupAPI")
                 await interaction.followup.send(embed=embed, ephemeral=_ephemeral)
                 
         except httpx.HTTPStatusError as e:
-            if e.response.status_code == 401:
-                await interaction.followup.send("❌ Invalid NumLookupAPI key.", ephemeral=_ephemeral)
-            elif e.response.status_code == 429:
-                await interaction.followup.send("⏱️ API rate limit exceeded.", ephemeral=_ephemeral)
-            else:
-                await interaction.followup.send(f"❌ API Error: {e.response.status_code}", ephemeral=_ephemeral)
+            if e.response.status_code == 401: await interaction.followup.send("❌ Invalid NumLookupAPI key.", ephemeral=_ephemeral)
+            elif e.response.status_code == 429: await interaction.followup.send("⏱️ API rate limit exceeded.", ephemeral=_ephemeral)
+            else: await interaction.followup.send(f"❌ API Error: {e.response.status_code}", ephemeral=_ephemeral)
         except Exception as e:
-            await interaction.followup.send(f"❌ Error: {type(e).__name__}", ephemeral=_ephemeral)
+            tb_str = ''.join(traceback.format_exception(type(e), e, e.__traceback__))
+            error_message = f"❌ **An unexpected error occurred:**\n```py\n{tb_str[:1800]}\n```"
+            await interaction.followup.send(error_message, ephemeral=_ephemeral)
 
     @tree.command(name="shodan", description="Get Shodan host information")
-    @bot.app_commands.describe(
-        ip="IP address to look up",
-        _ephemeral="Show the response only to you (default: False)"
-    )
+    @bot.app_commands.describe(ip="IP address to look up", _ephemeral="Show the response only to you (default: False)")
     async def shodan_slash(interaction: discord.Interaction, ip: str, _ephemeral: bool = False):
         if not await bot.check_authorization(interaction.user.id):
             await interaction.response.send_message(bot.oauth_handler.get_authorization_message(interaction.user.mention), ephemeral=True)
@@ -890,22 +732,12 @@ def register_slash_commands(tree, bot: "Bot"):
         
         try:
             async with httpx.AsyncClient() as client:
-                response = await client.get(
-                    f"https://api.shodan.io/shodan/host/{ip}",
-                    params={"key": bot.config.shodan_api_key},
-                    timeout=20
-                )
+                response = await client.get(f"https://api.shodan.io/shodan/host/{ip}", params={"key": bot.config.shodan_api_key}, timeout=20)
                 response.raise_for_status()
                 data = response.json()
                 
                 flag = COUNTRY_FLAGS.get(data.get("country_code", ""), "🌐")
-                
-                embed = discord.Embed(
-                    title=f"🔍 Shodan: {ip}",
-                    url=f"https://www.shodan.io/host/{ip}",
-                    color=0xE74C3C,
-                    timestamp=datetime.now()
-                )
+                embed = discord.Embed(title=f"🔍 Shodan: {ip}", url=f"https://www.shodan.io/host/{ip}", color=0xE74C3C, timestamp=datetime.now())
                 
                 embed.add_field(name=f"{flag} Country", value=data.get('country_name', 'N/A'), inline=True)
                 embed.add_field(name="Organization", value=data.get('org', 'N/A'), inline=True)
@@ -914,16 +746,11 @@ def register_slash_commands(tree, bot: "Bot"):
                 
                 if hostnames := data.get('hostnames', []):
                     embed.add_field(name="Hostnames", value=', '.join(hostnames[:5]) + (' ...' if len(hostnames) > 5 else ''), inline=False)
-                
                 if ports := data.get('ports', []):
                     embed.add_field(name=f"Open Ports ({len(ports)})", value=', '.join(map(str, ports[:20])) + (' ...' if len(ports) > 20 else ''), inline=False)
-                
                 if vulns := data.get('vulns', []):
-                    vuln_text = ', '.join(vulns[:5])
-                    if len(vulns) > 5:
-                        vuln_text += f" (+{len(vulns) - 5} more)"
+                    vuln_text = ', '.join(vulns[:5]) + (f" (+{len(vulns) - 5} more)" if len(vulns) > 5 else "")
                     embed.add_field(name=f"⚠️ Vulnerabilities ({len(vulns)})", value=vuln_text, inline=False)
-                
                 if tags := data.get('tags', []):
                     embed.add_field(name="Tags", value=', '.join(tags), inline=False)
                 
@@ -931,14 +758,13 @@ def register_slash_commands(tree, bot: "Bot"):
                 await interaction.followup.send(embed=embed, ephemeral=_ephemeral)
                 
         except httpx.HTTPStatusError as e:
-            if e.response.status_code == 401:
-                await interaction.followup.send("❌ Invalid Shodan API key.", ephemeral=_ephemeral)
-            elif e.response.status_code == 404:
-                await interaction.followup.send(f"❌ No information available for `{ip}`.", ephemeral=_ephemeral)
-            else:
-                await interaction.followup.send(f"❌ API Error: {e.response.status_code}", ephemeral=_ephemeral)
+            if e.response.status_code == 401: await interaction.followup.send("❌ Invalid Shodan API key.", ephemeral=_ephemeral)
+            elif e.response.status_code == 404: await interaction.followup.send(f"❌ No information available for `{ip}`.", ephemeral=_ephemeral)
+            else: await interaction.followup.send(f"❌ API Error: {e.response.status_code}", ephemeral=_ephemeral)
         except Exception as e:
-            await interaction.followup.send(f"❌ Error: {type(e).__name__}", ephemeral=_ephemeral)
+            tb_str = ''.join(traceback.format_exception(type(e), e, e.__traceback__))
+            error_message = f"❌ **An unexpected error occurred:**\n```py\n{tb_str[:1800]}\n```"
+            await interaction.followup.send(error_message, ephemeral=_ephemeral)
 
     @tree.command(name="help", description="Show available commands")
     @bot.app_commands.describe(_ephemeral="Show the response only to you (default: False)")
@@ -969,7 +795,9 @@ def register_slash_commands(tree, bot: "Bot"):
             embed = discord.Embed(title="✅ Config Reloaded", description="Successfully reloaded all configuration files.", color=0x2ECC71, timestamp=datetime.now())
             await interaction.followup.send(embed=embed, ephemeral=_ephemeral)
         except Exception as e:
-            await interaction.followup.send(f"❌ Failed to reload config: {e}", ephemeral=_ephemeral)
+            tb_str = ''.join(traceback.format_exception(type(e), e, e.__traceback__))
+            error_message = f"❌ **Failed to reload config:**\n```py\n{tb_str[:1800]}\n```"
+            await interaction.followup.send(error_message, ephemeral=_ephemeral)
 
 # =================================================================================
 # END OF SLASH COMMAND REGISTRATION
@@ -1052,7 +880,6 @@ class Bot:
             register_slash_commands(self.tree, self)
 
     async def check_authorization(self, user_id: int) -> bool:
-        """Checks if user is authorized and validates token is still active."""
         if self.token_type != "bot" or not self.oauth_handler:
             return True
         return await self.oauth_handler.is_user_authorized(str(user_id))
@@ -1106,53 +933,60 @@ class Bot:
             print(f"[{self.data_dir.name}] Error saving notes: {e}")
 
     def load_user_tokens(self) -> Dict:
-        if not self.user_tokens_file.exists(): 
-            return {}
+        if not self.user_tokens_file.exists(): return {}
         try:
-            with open(self.user_tokens_file, "r", encoding="utf-8") as f: 
-                return json.load(f)
-        except (json.JSONDecodeError, IOError): 
-            return {}
+            with open(self.user_tokens_file, "r", encoding="utf-8") as f: return json.load(f)
+        except (json.JSONDecodeError, IOError): return {}
 
     def save_user_tokens(self, tokens: Dict):
         try:
-            with open(self.user_tokens_file, "w", encoding="utf-8") as f: 
-                json.dump(tokens, f, indent=4)
-        except IOError as e: 
-            print(f"[Token Storage] Error saving user tokens: {e}")
+            with open(self.user_tokens_file, "w", encoding="utf-8") as f: json.dump(tokens, f, indent=4)
+        except IOError as e: print(f"[Token Storage] Error saving user tokens: {e}")
 
     def censor_text(self, text: str, guild_id: Optional[int] = None) -> str:
-        if not text or not isinstance(text, str): 
-            return text or ""
+        if not text or not isinstance(text, str): return text or ""
         allow_swears = self.config.get_guild_config(guild_id, "allow-swears", self.config.default_allow_swears)
         allow_slurs = self.config.get_guild_config(guild_id, "allow-slurs", self.config.default_allow_slurs)
         if not allow_slurs:
-            for slur in SLUR_WORDS: 
-                text = re.compile(re.escape(slur), re.IGNORECASE).sub("█" * len(slur), text)
+            for slur in SLUR_WORDS: text = re.compile(re.escape(slur), re.IGNORECASE).sub("█" * len(slur), text)
         if not allow_swears:
-            for swear in SWEAR_WORDS: 
-                text = re.compile(re.escape(swear), re.IGNORECASE).sub("*" * len(swear), text)
+            for swear in SWEAR_WORDS: text = re.compile(re.escape(swear), re.IGNORECASE).sub("*" * len(swear), text)
         return text
 
-    async def bot_send(self, channel, content=None, files=None):
+    async def bot_send(self, channel, content=None, files=None, embed=None):
         censored_content = self.censor_text(content, channel.guild.id if hasattr(channel, "guild") and channel.guild else None) if content else ""
         try:
-            if not censored_content and not files: 
-                return None
-            if not censored_content: 
-                return await channel.send(files=files, suppress_embeds=True)
+            if not censored_content and not files and not embed: return None
+            
+            # Simplified sending logic
+            kwargs = {"suppress_embeds": True}
+            if censored_content:
+                kwargs["content"] = censored_content
+            if files:
+                kwargs["files"] = files
+            if embed and self.token_type == "bot":
+                kwargs["embed"] = embed
+                kwargs.pop("suppress_embeds", None) # Don't suppress our own embed
+            
             sent_message = None
-            for i, chunk in enumerate(split_message(censored_content)):
-                msg_files = files if i == 0 else None
-                sent = await channel.send(content=chunk, files=msg_files, suppress_embeds=True)
-                if i == 0: 
-                    sent_message = sent
-            return sent_message
+            # Chunking is only for text content
+            if censored_content:
+                for i, chunk in enumerate(split_message(censored_content)):
+                    current_kwargs = kwargs.copy()
+                    current_kwargs['content'] = chunk
+                    if i > 0: # Only send files/embed with the first chunk
+                        current_kwargs.pop('files', None)
+                        current_kwargs.pop('embed', None)
+
+                    sent = await channel.send(**current_kwargs)
+                    if i == 0: sent_message = sent
+                return sent_message
+            else:
+                 return await channel.send(**kwargs)
+
         except Exception as e:
-            if "Forbidden" in type(e).__name__: 
-                print(f"[{self.client.user}] Missing permissions in channel {channel.id}")
-            else: 
-                print(f"[{self.client.user}] Error sending message: {e}")
+            if "Forbidden" in type(e).__name__: print(f"[{self.client.user}] Missing permissions in channel {channel.id}")
+            else: print(f"[{self.client.user}] Error sending message: {e}")
         return None
 
     async def cleanup_forward_cache(self):
@@ -1161,10 +995,8 @@ class Bot:
             await asyncio.sleep(3600)
             cutoff = datetime.now() - timedelta(hours=24)
             expired = [k for k, v in self.forward_cache.items() if v["timestamp"] < cutoff]
-            for k in expired: 
-                del self.forward_cache[k]
-            if expired: 
-                print(f"[{self.client.user}] Cleaned {len(expired)} old forward cache entries.")
+            for k in expired: del self.forward_cache[k]
+            if expired: print(f"[{self.client.user}] Cleaned {len(expired)} old forward cache entries.")
 
     async def cleanup_message_cache(self):
         await self.client.wait_until_ready()
@@ -1173,16 +1005,12 @@ class Bot:
             now = datetime.now()
             cutoff = now - timedelta(minutes=10)
             msg_expired = [k for k, v in self.message_cache.items() if v["timestamp"] < cutoff]
-            for k in msg_expired: 
-                del self.message_cache[k]
-            if msg_expired: 
-                print(f"[{self.client.user}] Cleaned {len(msg_expired)} old message cache entries.")
+            for k in msg_expired: del self.message_cache[k]
+            if msg_expired: print(f"[{self.client.user}] Cleaned {len(msg_expired)} old message cache entries.")
             
             edit_expired = [k for k, v in self.edit_history.items() if now - datetime.fromisoformat(v.get("timestamp", now.isoformat())) > timedelta(minutes=10)]
-            for k in edit_expired: 
-                del self.edit_history[k]
-            if edit_expired: 
-                print(f"[{self.client.user}] Cleaned {len(edit_expired)} old edit history entries.")
+            for k in edit_expired: del self.edit_history[k]
+            if edit_expired: print(f"[{self.client.user}] Cleaned {len(edit_expired)} old edit history entries.")
 
     async def auto_refresh_alts(self):
         await self.client.wait_until_ready()
@@ -1192,8 +1020,7 @@ class Bot:
                 print(f"[{self.client.user}] Auto-refreshing alts database...")
                 try:
                     success = await self.alts_handler.refresh_alts_data(self.config.alts_refresh_url, self.ip_handler)
-                    if not success: 
-                        print(f"[{self.client.user}] Alts refresh failed.")
+                    if not success: print(f"[{self.client.user}] Alts refresh failed.")
                 except Exception as e:
                     print(f"[{self.client.user}] Error during auto-refresh: {e}")
             await asyncio.sleep(60)
@@ -1211,16 +1038,16 @@ class Bot:
                 await self.admin_commands[command_name](message, args)
         except Exception as e:
             print(f"[{self.client.user}] Error in command '{command_name}': {e}")
-            import traceback
-            traceback.print_exc()
+            tb_str = ''.join(traceback.format_exception(type(e), e, e.__traceback__))
+            error_message = f"❌ **An unexpected error occurred:**\n```py\n{tb_str[:1800]}\n```"
+            await self.bot_send(message.channel, content=error_message)
 
     async def handle_asteroide_response(self, message):
         try:
             if re.search(r"\S+ has \d+ alts:", message.content):
                 if parsed := self.alts_handler.parse_alts_response(message.content): 
                     self.alts_handler.store_alts_data(parsed)
-        except Exception as e: 
-            print(f"[{self.client.user}] Error handling Asteroide response: {e}")
+        except Exception as e: print(f"[{self.client.user}] Error handling Asteroide response: {e}")
 
     async def on_ready(self):
         print(f"Logged in as {self.client.user} (ID: {self.client.user.id}) [Type: {self.token_type}]")
@@ -1248,12 +1075,10 @@ class Bot:
         self.client.loop.create_task(self.auto_refresh_alts())
         print(f"[{self.client.user}] Started background tasks (cache cleanup, alts auto-refresh)")
 
-    async def on_presence_update(self, before, after): 
-        pass
+    async def on_presence_update(self, before, after): pass
 
     async def on_message(self, message):
-        if message.author.id == self.client.user.id: 
-            return
+        if message.author.id == self.client.user.id: return
         if message.author.bot:
             if str(message.author.id) == ASTEROIDE_BOT_ID and self.config.get_guild_config(message.guild.id if message.guild else None, "detect-ips", self.config.default_detect_ips):
                 await self.handle_asteroide_response(message)
@@ -1271,32 +1096,25 @@ class Bot:
 
         await self._handle_sync_message(message)
 
-        if self.token_type != "user":
-            return
+        if self.token_type != "user": return
         
         gid = message.guild.id if message.guild else None
-        if not self.config.get_guild_config(gid, "allow-commands", self.config.default_allow_commands, message.author.id, message.channel.id): 
-            return
+        if not self.config.get_guild_config(gid, "allow-commands", self.config.default_allow_commands, message.author.id, message.channel.id): return
 
         prefix = self.config.get_prefix(gid)
-        if not message.content.startswith(prefix): 
-            return
+        if not message.content.startswith(prefix): return
         
         parts = message.content[len(prefix):].split()
-        if not parts: 
-            return
+        if not parts: return
         await self.handle_command(message, parts[0].lower(), parts[1:])
 
     async def on_message_edit(self, before, after):
-        if after.author.id == self.client.user.id or not after.guild or after.author.bot: 
-            return
-        if not self.config.get_guild_config(after.guild.id, "prevent-editing", self.config.default_prevent_editing, after.author.id, after.channel.id): 
-            return
+        if after.author.id == self.client.user.id or not after.guild or after.author.bot: return
+        if not self.config.get_guild_config(after.guild.id, "prevent-editing", self.config.default_prevent_editing, after.author.id, after.channel.id): return
 
         original = self.message_cache.get(after.id, {}).get("content", before.content)
         new = after.content or ""
-        if original == new: 
-            return
+        if original == new: return
 
         if after.id not in self.edit_history:
             self.edit_history[after.id] = {"bot_msg": None, "all_edits": [], "original": original, "timestamp": datetime.now().isoformat()}
@@ -1310,14 +1128,11 @@ class Bot:
             edit_lines = [f"**Original:** {original or '*empty*'}"] + [f"**Edited {i+1}:** {e or '*empty*'}" for i, e in enumerate(history['all_edits'][:-1])] + [f"**Now:** {new or '*empty*'}" ]
             edit_info = f"**Edited by <@{after.author.id}>**\n" + "\n".join(edit_lines[0:1] + edit_lines[-1:] if len(edit_lines) <= 2 else edit_lines)
 
-            if history["bot_msg"]: 
-                await history["bot_msg"].edit(content=edit_info)
+            if history["bot_msg"]: await history["bot_msg"].edit(content=edit_info)
             else:
                 bot_msg = await self.bot_send(after.channel, content=edit_info)
-                if bot_msg: 
-                    history["bot_msg"] = bot_msg
-        except Exception as e:
-            print(f"[{self.client.user}] Error in on_message_edit: {e}")
+                if bot_msg: history["bot_msg"] = bot_msg
+        except Exception as e: print(f"[{self.client.user}] Error in on_message_edit: {e}")
 
     async def on_message_delete(self, message):
         gid = message.guild.id if message.guild else None
@@ -1328,8 +1143,7 @@ class Bot:
         content_display = f"`{(original or '[Empty Message]').replace('`', '`')}`"
         
         attachments = "\n".join([f"<{att.url}>" for att in message.attachments]) if message.attachments else ""
-        if not original and not attachments: 
-            return
+        if not original and not attachments: return
 
         try:
             if message.author.id == self.client.user.id:
@@ -1339,36 +1153,28 @@ class Bot:
         except Exception as e:
             print(f"[{self.client.user}] Error in on_message_delete: {e}")
         finally:
-            if message.id in self.message_cache: 
-                del self.message_cache[message.id]
-            if message.id in self.edit_history: 
-                del self.edit_history[message.id]
+            if message.id in self.message_cache: del self.message_cache[message.id]
+            if message.id in self.edit_history: del self.edit_history[message.id]
 
     async def _handle_sync_message(self, message):
-        if not self.config.sync_channel_id or (message.guild and str(message.channel.id) == self.config.sync_channel_id): 
-            return
+        if not self.config.sync_channel_id or (message.guild and str(message.channel.id) == self.config.sync_channel_id): return
         
         is_dm = not message.guild
         is_ping = message.guild and self.client.user in message.mentions
         is_reply = message.reference and message.reference.resolved and message.reference.resolved.author == self.client.user
         is_keyword = bool(re.search(r"liforra", message.content, re.IGNORECASE))
-        if not (is_dm or is_ping or is_reply or is_keyword): 
-            return
+        if not (is_dm or is_ping or is_reply or is_keyword): return
 
-        try: 
-            target_channel = self.client.get_channel(int(self.config.sync_channel_id))
-        except (ValueError, TypeError): 
-            return print(f"[{self.client.user}] SYNC ERROR: Invalid sync-channel ID.")
-        if not target_channel: 
-            return print(f"[{self.client.user}] SYNC ERROR: Could not find sync channel.")
+        try: target_channel = self.client.get_channel(int(self.config.sync_channel_id))
+        except (ValueError, TypeError): return print(f"[{self.client.user}] SYNC ERROR: Invalid sync-channel ID.")
+        if not target_channel: return print(f"[{self.client.user}] SYNC ERROR: Could not find sync channel.")
 
         author_name = f"{message.author.name}#{message.author.discriminator}" if message.author.discriminator != '0' else message.author.name
         header = f"**From `{author_name}`** in `{'DMs' if is_dm else f'{message.guild.name} / #{message.channel.name}'}`"
         
         mention = f"<@{self.config.sync_mention_id}>" if is_ping and self.config.sync_mention_id else ""
         
-        import httpx
-        import io
+        import httpx, io
         files = []
         if message.attachments:
             async with httpx.AsyncClient() as http_client:
@@ -1377,8 +1183,7 @@ class Bot:
                         r = await http_client.get(att.url, timeout=60)
                         r.raise_for_status()
                         files.append(self.discord.File(io.BytesIO(r.content), filename=att.filename))
-                    except Exception as e: 
-                        print(f"[{self.client.user}] SYNC: Failed to download attachment: {e}")
+                    except Exception as e: print(f"[{self.client.user}] SYNC: Failed to download attachment: {e}")
         
         sent_message = await self.bot_send(target_channel, content=f"{header}\n{message.content}\n{mention}", files=files)
         if sent_message:
