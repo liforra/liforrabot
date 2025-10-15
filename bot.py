@@ -305,7 +305,7 @@ def register_slash_commands(tree, bot: "Bot"):
     async def pfact_slash(interaction: bot.discord.Interaction, fact_type: str = "random", language: str = "en"):
         await fact_slash(interaction, fact_type, language, _ephemeral=True)
 
-    # Search command using SerpAPI
+    # Search command using SerpAPI - with pagination and better embeds
     @tree.command(name="search", description="Search Google using SerpAPI")
     @bot.app_commands.describe(query="Search query")
     @bot.app_commands.allowed_installs(guilds=True, users=True)
@@ -354,145 +354,106 @@ def register_slash_commands(tree, bot: "Bot"):
                 )
                 response.raise_for_status()
                 data = response.json()
-                
-                embed = bot.discord.Embed(
-                    title=f"🔍 Search Results",
-                    description=f"**Query:** `{query}`",
-                    color=0x4285F4,
-                    timestamp=datetime.now()
+            
+            embeds = []
+            
+            # --- Build Page 1 (Summary) ---
+            summary_embed = bot.discord.Embed(
+                title="🔍 Google Search Results",
+                description=f"**Query:** `{query}`",
+                color=0x4285F4,
+                timestamp=datetime.now(),
+                url=data.get("search_metadata", {}).get("google_url", None)
+            )
+            summary_embed.set_thumbnail(url="https://cdn-icons-png.flaticon.com/512/751/751463.png")
+
+            search_info = data.get("search_information", {})
+            search_params = data.get("search_parameters", {})
+            
+            if (total_results := search_info.get("total_results")) or (time_taken := search_info.get("time_taken_displayed")):
+                summary_embed.add_field(
+                    name="📊 Stats",
+                    value=f"{total_results:,} results\n({time_taken or 'N/A'} seconds)",
+                    inline=True
                 )
-                
-                embed.set_thumbnail(url="https://cdn-icons-png.flaticon.com/512/751/751463.png")
-                
-                # Add search information
-                search_info = data.get("search_information", {})
-                total_results = search_info.get("total_results", 0)
-                time_taken = search_info.get("time_taken_displayed", "N/A")
-                
-                if total_results or time_taken != "N/A":
-                    info_text = []
-                    if total_results:
-                        info_text.append(f"**Results:** {total_results:,}")
-                    if time_taken != "N/A":
-                        info_text.append(f"**Time:** {time_taken}s")
-                    
-                    embed.add_field(
-                        name="📊 Search Info",
-                        value="\n".join(info_text),
-                        inline=True
-                    )
-                
-                # Add answer box if available (for quick answers)
-                answer_box = data.get("answer_box", {})
-                if answer_box:
-                    answer_type = answer_box.get("type", "")
-                    if answer_type == "dictionary_results":
-                        word_type = answer_box.get("word_type", "")
-                        definitions = answer_box.get("definitions", [])
-                        phonetic = answer_box.get("phonetic", "")
-                        
-                        answer_text = []
-                        if phonetic:
-                            answer_text.append(f"**Pronunciation:** {phonetic}")
-                        if word_type:
-                            answer_text.append(f"**Type:** {word_type}")
-                        if definitions:
-                            answer_text.append(f"**Definition:** {definitions[0]}")
-                        
-                        if answer_text:
-                            embed.add_field(
-                                name="📖 Dictionary",
-                                value="\n".join(answer_text),
-                                inline=False
-                            )
-                    else:
-                        # Generic answer box
-                        answer = answer_box.get("answer", answer_box.get("snippet", ""))
-                        if answer:
-                            embed.add_field(
-                                name="💡 Quick Answer",
-                                value=answer[:200] + ("..." if len(answer) > 200 else ""),
-                                inline=False
-                            )
-                
-                # Add knowledge graph if available
-                knowledge_graph = data.get("knowledge_graph", {})
-                if knowledge_graph:
-                    kg_title = knowledge_graph.get("title", "")
-                    kg_type = knowledge_graph.get("entity_type", "")
-                    kg_description = knowledge_graph.get("description", "")
-                    
-                    if kg_title:
-                        kg_text = f"**{kg_title}**"
-                        if kg_type:
-                            kg_text += f" _{kg_type}_"
-                        if kg_description:
-                            kg_text += f"\n{kg_description[:150] + ('...' if len(kg_description) > 150 else '')}"
-                        
-                        embed.add_field(
-                            name="📚 Knowledge Graph",
-                            value=kg_text,
-                            inline=False
-                        )
-                
-                # Add organic results
-                organic_results = data.get("organic_results", [])[:4]  # Limit to 4 results
-                if organic_results:
-                    results_text = []
-                    for idx, result in enumerate(organic_results, 1):
-                        title = result.get("title", "No Title")
-                        link = result.get("link", "")
-                        snippet = result.get("snippet", "")
-                        
-                        # Truncate for better display
-                        if len(title) > 50:
-                            title = title[:47] + "..."
-                        if len(snippet) > 80:
-                            snippet = snippet[:77] + "..."
-                        
-                        if link:
-                            results_text.append(f"**{idx}. [{title}]({link})**")
-                        else:
-                            results_text.append(f"**{idx}. {title}**")
-                        
-                        if snippet:
-                            results_text.append(f"_{snippet}_")
-                        
-                        if idx < len(organic_results):
-                            results_text.append("")  # Add spacing between results
-                    
-                    embed.add_field(
-                        name="🔗 Top Results",
-                        value="\n".join(results_text),
+            
+            if location := search_params.get("location_used"):
+                summary_embed.add_field(
+                    name="📍 Location",
+                    value=location,
+                    inline=True
+                )
+
+            if answer_box := data.get("answer_box", {}):
+                answer = answer_box.get("answer", answer_box.get("snippet", ""))
+                if answer:
+                    summary_embed.add_field(
+                        name="💡 Quick Answer",
+                        value=answer[:1000] + ("..." if len(answer) > 1000 else ""),
                         inline=False
                     )
+
+            if kg := data.get("knowledge_graph", {}):
+                if kg_title := kg.get("title"):
+                    kg_text = f"**{kg_title}**"
+                    if kg_type := kg.get("entity_type"):
+                        kg_text += f" _{kg_type}_"
+                    if kg_desc := kg.get("description"):
+                        kg_text += f"\n{kg_desc[:200] + ('...' if len(kg_desc) > 200 else '')}"
+                    summary_embed.add_field(name="📚 Knowledge Graph", value=kg_text, inline=False)
+
+            organic_results = data.get("organic_results", [])
+            
+            if organic_results:
+                top_results_text = []
+                for result in organic_results[:2]:
+                    title = result.get('title', 'No Title')
+                    link = result.get('link', '#')
+                    snippet = result.get('snippet', 'No snippet available.')
+                    top_results_text.append(f"**[{title}]({link})**\n📝 _{snippet[:150] + ('...' if len(snippet) > 150 else '')}_")
                 
-                # Add related questions if available
-                related_questions = data.get("related_questions", [])[:3]  # Limit to 3
-                if related_questions:
-                    questions = []
-                    for q in related_questions:
-                        question = q.get("question", "")
-                        if question and len(question) <= 80:
-                            questions.append(f"• {question}")
-                        elif question:
-                            questions.append(f"• {question[:77]}...")
+                summary_embed.add_field(name="🏆 Top Results", value="\n\n".join(top_results_text), inline=False)
+            
+            embeds.append(summary_embed)
+
+            # --- Build Subsequent Pages (Organic Results) ---
+            results_per_page = 4
+            remaining_results = organic_results[2:]
+            
+            if remaining_results:
+                num_pages = (len(remaining_results) + results_per_page - 1) // results_per_page
+                for i in range(num_pages):
+                    chunk = remaining_results[i * results_per_page : (i + 1) * results_per_page]
+                    page_embed = bot.discord.Embed(
+                        title=f"🔍 Search Results (Page {i+2})",
+                        description=f"**Query:** `{query}`",
+                        color=0x4285F4
+                    )
                     
-                    if questions:
-                        embed.add_field(
-                            name="❓ People also ask",
-                            value="\n".join(questions),
-                            inline=False
-                        )
-                
-                # Set footer with location info
-                search_params = data.get("search_parameters", {})
-                location = search_params.get("location_used", "Hamburg, Germany")
-                
-                embed.set_footer(text=f"liforra.de | Liforras Utility bot | Powered by SerpAPI | Location: {location}")
-                
-                await interaction.followup.send(embed=embed, ephemeral=_ephemeral)
-                
+                    results_text = []
+                    for result in chunk:
+                        title = result.get('title', 'No Title')
+                        link = result.get('link', '#')
+                        snippet = result.get('snippet', 'No snippet available.')
+                        results_text.append(f"**[{title}]({link})**\n📝 _{snippet[:200] + ('...' if len(snippet) > 200 else '')}_")
+                    
+                    page_embed.description += "\n\n" + "\n\n".join(results_text)
+                    embeds.append(page_embed)
+
+            # --- Send the response ---
+            if not embeds:
+                await interaction.followup.send("❌ No results found.", ephemeral=_ephemeral)
+                return
+
+            for i, embed in enumerate(embeds):
+                embed.set_footer(text=f"liforra.de | Liforras Utility bot | Powered by SerpAPI | Page {i+1}/{len(embeds)}")
+            
+            if len(embeds) == 1:
+                await interaction.followup.send(embed=embeds[0], ephemeral=_ephemeral)
+            else:
+                pagination = PaginationView(embeds, bot.discord)
+                await interaction.followup.send(embed=embeds[0], view=pagination.view, ephemeral=_ephemeral)
+
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 401:
                 await interaction.followup.send("❌ Invalid SerpAPI key configuration.", ephemeral=_ephemeral)
