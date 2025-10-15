@@ -586,25 +586,37 @@ class UserCommands:
 
     def _format_xbox_info(self, player: dict, discord_module) -> discord.Embed:
         """Formats Xbox player information into an embed."""
+        meta = player.get('meta', {})
         embed = discord_module.Embed(
-            title=f"🎮 Xbox Profile: {player.get('username', player.get('gamertag', 'Unknown'))}", 
+            title=f"🎮 Xbox Profile: {player.get('username', 'Unknown')}", 
             color=0x107C10
         )
         if player.get('avatar'):
             embed.set_thumbnail(url=player['avatar'])
         
-        if player.get('xuid'):
-            embed.add_field(name="XUID", value=f"`{player['xuid']}`", inline=True)
-        if player.get('gamerscore'):
-            embed.add_field(name="Gamerscore", value=f"{player['gamerscore']:,}", inline=True)
-        if player.get('account_tier'):
-            embed.add_field(name="Tier", value=player['account_tier'], inline=True)
-        if player.get('reputation'):
-            embed.add_field(name="Reputation", value=player['reputation'], inline=True)
-        if player.get('bio'):
-            bio = player['bio']
-            if len(bio) > 100:
-                bio = bio[:97] + "..."
+        if player.get('id'):
+            embed.add_field(name="Xbox User ID", value=f"`{player['id']}`", inline=True)
+        if meta.get('gamerscore'):
+            embed.add_field(name="Gamerscore", value=f"{int(meta['gamerscore']):,}", inline=True)
+        if meta.get('accountTier'):
+            embed.add_field(name="Account Tier", value=meta['accountTier'], inline=True)
+        if meta.get('xboxOneRep'):
+            embed.add_field(name="Reputation", value=meta['xboxOneRep'], inline=True)
+        if meta.get('tenureLevel'):
+            tenure = meta['tenureLevel']
+            if tenure != "0":
+                embed.add_field(name="Tenure Level", value=tenure, inline=True)
+        
+        if meta.get('realName'):
+            embed.add_field(name="Real Name", value=meta['realName'], inline=True)
+        
+        if meta.get('location') and meta['location'].strip():
+            embed.add_field(name="📍 Location", value=meta['location'], inline=True)
+        
+        if meta.get('bio'):
+            bio = meta['bio']
+            if len(bio) > 200:
+                bio = bio[:197] + "..."
             embed.add_field(name="Bio", value=bio, inline=False)
             
         if cached_at := player.get('meta', {}).get('cached_at'):
