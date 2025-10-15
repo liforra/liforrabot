@@ -103,209 +103,109 @@ class PaginationView:
 
 
 # =================================================================================
-# START OF FIX: Moved slash command registration outside the Bot class
+# START OF SLASH COMMAND REGISTRATION
 # =================================================================================
 def register_slash_commands(tree, bot: "Bot"):
     """Registers all slash commands for the bot."""
     
-    # Imports needed for the commands
     import httpx
     from utils.helpers import format_alt_name, format_alts_grid, is_valid_ip, is_valid_ipv6
     from utils.constants import COUNTRY_FLAGS
 
     # ==================== USER COMMANDS ====================
     
-    # Trump command with embed
     @tree.command(name="trump", description="Get a random Trump quote")
     @bot.app_commands.allowed_installs(guilds=True, users=True)
     @bot.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
     async def trump_slash(interaction: bot.discord.Interaction, _ephemeral: bool = False):
         if not bot.check_authorization(interaction.user.id):
-            await interaction.response.send_message(
-                bot.oauth_handler.get_authorization_message(interaction.user.mention),
-                ephemeral=True
-            )
+            await interaction.response.send_message(bot.oauth_handler.get_authorization_message(interaction.user.mention), ephemeral=True)
             return
-        
         await interaction.response.defer(ephemeral=_ephemeral)
-        
         try:
             async with httpx.AsyncClient() as client:
-                response = await client.get(
-                    "https://api.whatdoestrumpthink.com/api/v1/quotes/random",
-                    timeout=10,
-                )
-                response.raise_for_status()
-                quote = response.json().get("message", "Could not retrieve a quote.")
-                
-                embed = bot.discord.Embed(
-                    description=f'*"{quote}"*',
-                    color=0xFF0000,
-                )
-                embed.set_author(
-                    name="Donald Trump",
-                    icon_url="https://upload.wikimedia.org/wikipedia/commons/thumb/5/56/Donald_Trump_official_portrait.jpg/480px-Donald_Trump_official_portrait.jpg"
-                )
-                embed.set_footer(text="liforra.de | Liforras Utility bot | Powered by What Does Trump Think API")
-                
-                await interaction.followup.send(embed=embed, ephemeral=_ephemeral)
+                r = await client.get("https://api.whatdoestrumpthink.com/api/v1/quotes/random", timeout=10)
+                r.raise_for_status()
+                quote = r.json().get("message", "Could not retrieve a quote.")
+            embed = bot.discord.Embed(description=f'*"{quote}"*', color=0xB32E2E)
+            embed.set_author(name="Donald Trump", icon_url="https://i.imgur.com/GkZasg8.png")
+            embed.set_footer(text="liforra.de | Liforras Utility bot")
+            await interaction.followup.send(embed=embed, ephemeral=_ephemeral)
         except Exception as e:
             await interaction.followup.send(f"❌ Error: {type(e).__name__}", ephemeral=_ephemeral)
 
     @tree.command(name="ptrump", description="[Private] Get a random Trump quote")
-    @bot.app_commands.allowed_installs(guilds=True, users=True)
-    @bot.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
     async def ptrump_slash(interaction: bot.discord.Interaction):
         await trump_slash(interaction, _ephemeral=True)
 
-    # Tech command with embed
     @tree.command(name="tech", description="Get a random tech tip or fact")
-    @bot.app_commands.allowed_installs(guilds=True, users=True)
-    @bot.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
     async def tech_slash(interaction: bot.discord.Interaction, _ephemeral: bool = False):
         if not bot.check_authorization(interaction.user.id):
-            await interaction.response.send_message(
-                bot.oauth_handler.get_authorization_message(interaction.user.mention),
-                ephemeral=True
-            )
+            await interaction.response.send_message(bot.oauth_handler.get_authorization_message(interaction.user.mention), ephemeral=True)
             return
-        
         await interaction.response.defer(ephemeral=_ephemeral)
-        
         try:
             async with httpx.AsyncClient() as client:
-                response = await client.get(
-                    "https://techy-api.vercel.app/api/json",
-                    timeout=10,
-                )
-                response.raise_for_status()
-                data = response.json()
-                message = data.get("message", "Could not retrieve a tech tip.")
-                
-                embed = bot.discord.Embed(
-                    title="💡 Tech Tip",
-                    description=message,
-                    color=0x00D4AA,
-                )
-                embed.set_thumbnail(url="https://cdn-icons-png.flaticon.com/512/2103/2103633.png")
-                embed.set_footer(text="liforra.de | Liforras Utility bot | Powered by Techy API")
-                
-                await interaction.followup.send(embed=embed, ephemeral=_ephemeral)
+                r = await client.get("https://techy-api.vercel.app/api/json", timeout=10)
+                r.raise_for_status()
+                message = r.json().get("message", "Could not retrieve a tech tip.")
+            embed = bot.discord.Embed(title="💡 Tech Tip", description=message, color=0x00D4AA)
+            embed.set_thumbnail(url="https://i.imgur.com/3Q3Q1aD.png")
+            embed.set_footer(text="liforra.de | Liforras Utility bot | Powered by Techy API")
+            await interaction.followup.send(embed=embed, ephemeral=_ephemeral)
         except Exception as e:
             await interaction.followup.send(f"❌ Error: {type(e).__name__}", ephemeral=_ephemeral)
 
     @tree.command(name="ptech", description="[Private] Get a random tech tip or fact")
-    @bot.app_commands.allowed_installs(guilds=True, users=True)
-    @bot.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
     async def ptech_slash(interaction: bot.discord.Interaction):
         await tech_slash(interaction, _ephemeral=True)
 
-    # Fact command with language support
     @tree.command(name="fact", description="Get a random or daily useless fact")
-    @bot.app_commands.describe(
-        fact_type="Type of fact to get",
-        language="Language for the fact (en or de)"
-    )
+    @bot.app_commands.describe(fact_type="Type of fact", language="Language (en or de)")
     @bot.app_commands.choices(fact_type=[
         bot.app_commands.Choice(name="Random", value="random"),
         bot.app_commands.Choice(name="Today's Fact", value="today")
-    ])
-    @bot.app_commands.choices(language=[
+    ], language=[
         bot.app_commands.Choice(name="English", value="en"),
         bot.app_commands.Choice(name="German", value="de")
     ])
-    @bot.app_commands.allowed_installs(guilds=True, users=True)
-    @bot.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
     async def fact_slash(interaction: bot.discord.Interaction, fact_type: str = "random", language: str = "en", _ephemeral: bool = False):
         if not bot.check_authorization(interaction.user.id):
-            await interaction.response.send_message(
-                bot.oauth_handler.get_authorization_message(interaction.user.mention),
-                ephemeral=True
-            )
+            await interaction.response.send_message(bot.oauth_handler.get_authorization_message(interaction.user.mention), ephemeral=True)
             return
-        
         await interaction.response.defer(ephemeral=_ephemeral)
-        
         try:
-            base_url = "https://uselessfacts.jsph.pl"
-            endpoint = f"/api/v2/facts/{fact_type}"
-            params = {"language": language}
-            
             async with httpx.AsyncClient() as client:
-                response = await client.get(
-                    f"{base_url}{endpoint}",
-                    params=params,
-                    timeout=10,
-                )
-                response.raise_for_status()
-                data = response.json()
-                
-                fact_text = data.get("text", "Could not retrieve a fact.")
-                fact_id = data.get("id", "")
-                source = data.get("source", "")
-                source_url = data.get("source_url", "")
-                
-                # Choose color and title based on fact type
-                if fact_type == "today":
-                    color = 0xFFD700  # Gold
-                    title = "📅 Today's Useless Fact"
-                    thumbnail_url = "https://cdn-icons-png.flaticon.com/512/3652/3652191.png"
-                else:
-                    color = 0xFF6B35  # Orange
-                    title = "🤔 Random Useless Fact"
-                    thumbnail_url = "https://cdn-icons-png.flaticon.com/512/2103/2103558.png"
-                
-                embed = bot.discord.Embed(
-                    title=title,
-                    description=fact_text,
-                    color=color,
-                )
-                
-                embed.set_thumbnail(url=thumbnail_url)
-                
-                if source:
-                    if source_url:
-                        embed.add_field(
-                            name="📚 Source", 
-                            value=f"[{source}]({source_url})", 
-                            inline=False
-                        )
-                    else:
-                        embed.add_field(name="📚 Source", value=source, inline=False)
-                
-                if fact_id:
-                    embed.set_footer(text=f"liforra.de | Liforras Utility bot | Fact ID: {fact_id} | Language: {language.upper()}")
-                else:
-                    embed.set_footer(text=f"liforra.de | Liforras Utility bot | Language: {language.upper()}")
-                
-                await interaction.followup.send(embed=embed, ephemeral=_ephemeral)
+                r = await client.get(f"https://uselessfacts.jsph.pl/api/v2/facts/{fact_type}", params={"language": language}, timeout=10)
+                r.raise_for_status()
+                data = r.json()
+            
+            color, title, thumb = (0xFFD700, "📅 Today's Useless Fact", "https://i.imgur.com/3l85nlt.png") if fact_type == "today" else (0xFF6B35, "🤔 Random Useless Fact", "https://i.imgur.com/2VX8V5T.png")
+            embed = bot.discord.Embed(title=title, description=data.get("text", "N/A."), color=color)
+            embed.set_thumbnail(url=thumb)
+            
+            if source := data.get("source"):
+                embed.add_field(name="📚 Source", value=f"[{source}]({data.get('source_url')})" if data.get('source_url') else source, inline=False)
+            
+            embed.set_footer(text=f"liforra.de | Liforras Utility bot | ID: {data.get('id', 'N/A')} | Lang: {language.upper()}")
+            await interaction.followup.send(embed=embed, ephemeral=_ephemeral)
         except httpx.HTTPStatusError as e:
-            if e.response.status_code == 404:
-                await interaction.followup.send("❌ No fact available for the selected criteria.", ephemeral=_ephemeral)
-            else:
-                await interaction.followup.send(f"❌ API Error: {e.response.status_code}", ephemeral=_ephemeral)
+            await interaction.followup.send(f"❌ API Error: {e.response.status_code}", ephemeral=_ephemeral)
         except Exception as e:
             await interaction.followup.send(f"❌ Error: {type(e).__name__}", ephemeral=_ephemeral)
 
     @tree.command(name="pfact", description="[Private] Get a random or daily useless fact")
-    @bot.app_commands.describe(
-        fact_type="Type of fact to get",
-        language="Language for the fact (en or de)"
-    )
+    @bot.app_commands.describe(fact_type="Type of fact", language="Language (en or de)")
     @bot.app_commands.choices(fact_type=[
         bot.app_commands.Choice(name="Random", value="random"),
         bot.app_commands.Choice(name="Today's Fact", value="today")
-    ])
-    @bot.app_commands.choices(language=[
+    ], language=[
         bot.app_commands.Choice(name="English", value="en"),
         bot.app_commands.Choice(name="German", value="de")
     ])
-    @bot.app_commands.allowed_installs(guilds=True, users=True)
-    @bot.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
     async def pfact_slash(interaction: bot.discord.Interaction, fact_type: str = "random", language: str = "en"):
         await fact_slash(interaction, fact_type, language, _ephemeral=True)
 
-    # Search command using SerpAPI - with pagination and better embeds
     LANGUAGE_MAP = {
         "Germany": {"hl": "de", "gl": "de", "google_domain": "google.de", "location": "Hamburg, Germany"},
         "United States": {"hl": "en", "gl": "us", "google_domain": "google.com", "location": "Austin, Texas, United States"},
@@ -313,31 +213,16 @@ def register_slash_commands(tree, bot: "Bot"):
     }
     
     @tree.command(name="search", description="Search Google using SerpAPI")
-    @bot.app_commands.describe(
-        query="Search query",
-        _language="Search region"
-    )
-    @bot.app_commands.choices(_language=[
-        bot.app_commands.Choice(name="Germany", value="Germany"),
-        bot.app_commands.Choice(name="United States", value="United States"),
-        bot.app_commands.Choice(name="United Kingdom", value="United Kingdom")
-    ])
-    @bot.app_commands.allowed_installs(guilds=True, users=True)
-    @bot.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+    @bot.app_commands.describe(query="Your search query", _language="The search region")
+    @bot.app_commands.choices(_language=[bot.app_commands.Choice(name=k, value=k) for k in LANGUAGE_MAP.keys()])
     async def search_slash(interaction: bot.discord.Interaction, query: str, _language: str = "Germany", _ephemeral: bool = False):
         if not bot.check_authorization(interaction.user.id):
-            await interaction.response.send_message(
-                bot.oauth_handler.get_authorization_message(interaction.user.mention),
-                ephemeral=True
-            )
+            await interaction.response.send_message(bot.oauth_handler.get_authorization_message(interaction.user.mention), ephemeral=True)
             return
         
         is_allowed, wait_time = bot.check_rate_limit(interaction.user.id, "search", limit=5, window=60)
         if not is_allowed:
-            await interaction.response.send_message(
-                f"⏱️ Rate limit exceeded. Please wait {wait_time} seconds.",
-                ephemeral=True
-            )
+            await interaction.response.send_message(f"⏱️ Rate limit exceeded. Please wait {wait_time} seconds.", ephemeral=True)
             return
         
         await interaction.response.defer(ephemeral=_ephemeral)
@@ -351,7 +236,7 @@ def register_slash_commands(tree, bot: "Bot"):
             params = {**search_region, "q": query, "api_key": bot.config.serpapi_key}
             
             async with httpx.AsyncClient() as client:
-                response = await client.get("https://serpapi.com/search.json", params=params, timeout=15)
+                response = await client.get("https://serpapi.com/search.json", params=params, timeout=20)
                 response.raise_for_status()
                 data = response.json()
 
@@ -360,15 +245,10 @@ def register_slash_commands(tree, bot: "Bot"):
                 return
 
             embeds = []
+            organic_results = data.get("organic_results", [])
             
             # --- Build Page 1 (Summary) ---
-            summary_embed = bot.discord.Embed(
-                title="🔍 Google Search Results",
-                description=f"**Query:** `{query}`",
-                color=0x4285F4,
-                timestamp=datetime.now(),
-                url=data.get("search_metadata", {}).get("google_url")
-            )
+            summary_embed = bot.discord.Embed(title="🔍 Google Search", description=f"**Query:** `{query}`", color=0x4285F4, url=data.get("search_metadata", {}).get("google_url"))
             summary_embed.set_thumbnail(url="https://i.imgur.com/tEChjwx.png")
 
             if (info := data.get("search_information")) and (total_results := info.get("total_results")):
@@ -376,21 +256,15 @@ def register_slash_commands(tree, bot: "Bot"):
             
             summary_embed.add_field(name="📍 Region", value=_language, inline=True)
 
-            if answer_box := data.get("answer_box", {}):
-                if answer := answer_box.get("answer") or answer_box.get("snippet"):
-                    summary_embed.add_field(name="💡 Quick Answer", value=answer[:1000] + "..." if len(answer) > 1000 else answer, inline=False)
-
-            if kg := data.get("knowledge_graph", {}):
-                if kg_title := kg.get("title"):
-                    kg_text = f"**{kg_title}**" + (f" _{kg.get('entity_type')}_" if kg.get('entity_type') else "")
-                    if kg_desc := kg.get("description"):
-                        kg_text += f"\n{kg_desc[:200] + ('...' if len(kg_desc) > 200 else '')}"
-                    summary_embed.add_field(name="📚 Knowledge Graph", value=kg_text, inline=False)
+            if (answer_box := data.get("answer_box", {})) and (answer := answer_box.get("answer") or answer_box.get("snippet")):
+                summary_embed.add_field(name="💡 Quick Answer", value=answer[:1000] + ("..." if len(answer) > 1000 else ""), inline=False)
+            elif (kg := data.get("knowledge_graph", {})) and (kg_title := kg.get("title")):
+                kg_text = f"**{kg_title}**" + (f" _{kg.get('entity_type')}_" if kg.get('entity_type') else "")
+                if kg_desc := kg.get("description"): kg_text += f"\n{kg_desc[:200] + ('...' if len(kg_desc) > 200 else '')}"
+                summary_embed.add_field(name="📚 Knowledge Graph", value=kg_text, inline=False)
             
-            organic_results = data.get("organic_results", [])
             if organic_results:
-                top_hit = organic_results[0]
-                summary_embed.add_field(name="🏆 Top Result", value=f"**[{top_hit.get('title')}]({top_hit.get('link')})**\n_{top_hit.get('snippet', 'No snippet.')[:150]...}_", inline=False)
+                summary_embed.add_field(name="🏆 Top Result", value=f"**[{organic_results[0].get('title')}]({organic_results[0].get('link')})**", inline=False)
             
             embeds.append(summary_embed)
 
@@ -400,17 +274,16 @@ def register_slash_commands(tree, bot: "Bot"):
                 for i in range(0, len(organic_results), results_per_page):
                     chunk = organic_results[i : i + results_per_page]
                     page_num = (i // results_per_page) + 1
-                    page_embed = bot.discord.Embed(title=f"Organic Results (Page {page_num})", color=0x34A853)
-                    
+                    page_embed = bot.discord.Embed(title=f"Search Results (Page {page_num})", color=0x34A853)
                     for result in chunk:
-                        page_embed.add_field(
-                            name=f"📄 {result.get('title', 'No Title')}",
-                            value=f"_{result.get('snippet', 'No snippet available.')[:200]...}_\n**[Read More]({result.get('link', '#')})**",
-                            inline=False
-                        )
+                        title = result.get('title', 'No Title')
+                        snippet = result.get('snippet', 'No snippet available.')
+                        link = result.get('link', '#')
+                        value_text = f"_{snippet[:200] + ('...' if len(snippet) > 200 else '')}_\n**[Read More]({link})**"
+                        page_embed.add_field(name=f"📄 {title}", value=value_text, inline=False)
                     embeds.append(page_embed)
-            
-            if not embeds or (len(embeds) == 1 and not summary_embed.fields):
+
+            if not any(embed.fields for embed in embeds):
                 await interaction.followup.send("❌ No results found.", ephemeral=_ephemeral)
                 return
 
@@ -426,19 +299,9 @@ def register_slash_commands(tree, bot: "Bot"):
         except Exception as e:
             await interaction.followup.send(f"❌ An unexpected error occurred: {type(e).__name__}", ephemeral=_ephemeral)
 
-
     @tree.command(name="psearch", description="[Private] Search Google using SerpAPI")
-    @bot.app_commands.describe(
-        query="Search query",
-        _language="Search region"
-    )
-    @bot.app_commands.choices(_language=[
-        bot.app_commands.Choice(name="Germany", value="Germany"),
-        bot.app_commands.Choice(name="United States", value="United States"),
-        bot.app_commands.Choice(name="United Kingdom", value="United Kingdom")
-    ])
-    @bot.app_commands.allowed_installs(guilds=True, users=True)
-    @bot.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+    @bot.app_commands.describe(query="Your search query", _language="The search region")
+    @bot.app_commands.choices(_language=[bot.app_commands.Choice(name=k, value=k) for k in LANGUAGE_MAP.keys()])
     async def psearch_slash(interaction: bot.discord.Interaction, query: str, _language: str = "Germany"):
         await search_slash(interaction, query, _language, _ephemeral=True)
 
@@ -1830,7 +1693,7 @@ Match Status = {bot.config.match_status}
     async def paltsrefresh_slash(interaction: bot.discord.Interaction):
         await altsrefresh_slash(interaction, _ephemeral=True)
 # =================================================================================
-# END OF FIX
+# END OF SLASH COMMAND REGISTRATION
 # =================================================================================
 
 
