@@ -278,26 +278,18 @@ class UserCommands:
 
             flag = COUNTRY_FLAGS.get(ip_data.get("countryCode", ""), "🌐")
 
-            # Format IP display based on type
-            if is_valid_ipv6(ip):
-                ip_header = f"**IP Information for `{ip}`:**"
-            else:
-                ip_header = f"**IP Information for [{ip}](<https://whatismyipaddress.com/ip/{ip}>):**"
+            ip_header = f"**IP Information for [{ip}](<https://whatismyipaddress.com/ip/{ip}>):**" if not is_valid_ipv6(ip) else f"**IP Information for `{ip}`:**"
 
             output = [
                 ip_header,
                 f"{flag} **Country:** {ip_data.get('country', 'N/A')} ({ip_data.get('countryCode', 'N/A')})",
                 f"**Region:** {ip_data.get('regionName', 'N/A')}",
                 f"**City:** {ip_data.get('city', 'N/A')}",
-                f"**ZIP:** {ip_data.get('zip', 'N/A')}",
-                f"**Coordinates:** {ip_data.get('lat', 'N/A')}, {ip_data.get('lon', 'N/A')}",
-                f"**Timezone:** {ip_data.get('timezone', 'N/A')}",
                 f"**ISP:** {ip_data.get('isp', 'N/A')}",
                 f"**Organization:** {ip_data.get('org', 'N/A')}",
                 f"**AS:** {ip_data.get('as', 'N/A')}",
             ]
 
-            # Check for VPN provider
             vpn_provider = self.bot.ip_handler.detect_vpn_provider(
                 ip_data.get("isp", ""), ip_data.get("org", "")
             )
@@ -322,8 +314,6 @@ class UserCommands:
                 )
 
             db_subcommand = args[1].lower()
-
-            # Allow stats for everyone, but require admin for other db commands
             is_admin = str(message.author.id) in self.bot.config.admin_ids
             
             if db_subcommand != "stats" and not is_admin:
@@ -334,22 +324,9 @@ class UserCommands:
 
             if db_subcommand == "stats":
                 total_ips = len(self.bot.ip_handler.ip_geo_data)
-                countries = set()
-                vpn_count = 0
-                hosting_count = 0
-
-                for geo in self.bot.ip_handler.ip_geo_data.values():
-                    if geo.get("countryCode"):
-                        countries.add(geo["countryCode"])
-                    
-                    vpn_provider = self.bot.ip_handler.detect_vpn_provider(
-                        geo.get("isp", ""), geo.get("org", "")
-                    )
-                    if vpn_provider or geo.get("proxy"):
-                        vpn_count += 1
-                    
-                    if geo.get("hosting"):
-                        hosting_count += 1
+                countries = {geo["countryCode"] for geo in self.bot.ip_handler.ip_geo_data.values() if geo.get("countryCode")}
+                vpn_count = sum(1 for geo in self.bot.ip_handler.ip_geo_data.values() if self.bot.ip_handler.detect_vpn_provider(geo.get("isp", ""), geo.get("org", "")) or geo.get("proxy"))
+                hosting_count = sum(1 for geo in self.bot.ip_handler.ip_geo_data.values() if geo.get("hosting"))
 
                 output = [
                     "**IP Database Statistics:**",
@@ -360,174 +337,72 @@ class UserCommands:
                     "",
                     "*liforra.de | Liforras Utility bot*"
                 ]
-
                 await self.bot.bot_send(message.channel, content="\n".join(output))
 
             elif db_subcommand == "info":
                 if len(args) < 3:
-                    return await self.bot.bot_send(
-                        message.channel, content=f"Usage: `{p}ip db info <ip>`"
-                    )
-
+                    return await self.bot.bot_send(message.channel, content=f"Usage: `{p}ip db info <ip>`")
                 ip = args[2]
                 if ip not in self.bot.ip_handler.ip_geo_data:
-                    return await self.bot.bot_send(
-                        message.channel,
-                        content=f"❌ No data for `{ip}` in database",
-                    )
-
+                    return await self.bot.bot_send(message.channel, content=f"❌ No data for `{ip}` in database")
                 geo = self.bot.ip_handler.ip_geo_data[ip]
                 flag = COUNTRY_FLAGS.get(geo.get("countryCode", ""), "🌐")
-
-                # Format IP display based on type
-                if is_valid_ipv6(ip):
-                    ip_header = f"**Cached IP Information for `{ip}`:**"
-                else:
-                    ip_header = f"**Cached IP Information for [{ip}](<https://whatismyipaddress.com/ip/{ip}>):**"
-
-                output = [
-                    ip_header,
-                    f"{flag} **Country:** {geo.get('country', 'N/A')} ({geo.get('countryCode', 'N/A')})",
-                    f"**Region:** {geo.get('regionName', 'N/A')}",
-                    f"**City:** {geo.get('city', 'N/A')}",
-                    f"**ISP:** {geo.get('isp', 'N/A')}",
-                    f"**Organization:** {geo.get('org', 'N/A')}",
-                ]
-
-                # Check for VPN provider
-                vpn_provider = self.bot.ip_handler.detect_vpn_provider(
-                    geo.get("isp", ""), geo.get("org", "")
-                )
-
-                if vpn_provider:
-                    output.append(f"**VPN Provider:** {vpn_provider}")
-                elif geo.get("proxy"):
-                    output.append(f"**Proxy/VPN:** Yes")
-
-                if geo.get("hosting"):
-                    output.append(f"**VPS/Hosting:** Yes")
-
-                output.append(
-                    f"**Last Updated:** {geo.get('last_updated', 'N/A')[:10]}"
-                )
-                
+                ip_header = f"**Cached IP Information for [{ip}](<https://whatismyipaddress.com/ip/{ip}>):**" if not is_valid_ipv6(ip) else f"**Cached IP Information for `{ip}`:**"
+                output = [ip_header, f"{flag} **Country:** {geo.get('country', 'N/A')} ({geo.get('countryCode', 'N/A')})", f"**Region:** {geo.get('regionName', 'N/A')}", f"**City:** {geo.get('city', 'N/A')}", f"**ISP:** {geo.get('isp', 'N/A')}", f"**Organization:** {geo.get('org', 'N/A')}"]
+                vpn_provider = self.bot.ip_handler.detect_vpn_provider(geo.get("isp", ""), geo.get("org", ""))
+                if vpn_provider: output.append(f"**VPN Provider:** {vpn_provider}")
+                elif geo.get("proxy"): output.append(f"**Proxy/VPN:** Yes")
+                if geo.get("hosting"): output.append(f"**VPS/Hosting:** Yes")
+                output.append(f"**Last Updated:** {geo.get('last_updated', 'N/A')[:10]}")
                 output.append("\n*liforra.de | Liforras Utility bot*")
-
                 await self.bot.bot_send(message.channel, content="\n".join(output))
 
             elif db_subcommand == "list":
                 page = int(args[2]) if len(args) > 2 and args[2].isdigit() else 1
                 per_page = 20
-
                 ips = sorted(self.bot.ip_handler.ip_geo_data.keys())
                 start = (page - 1) * per_page
                 page_ips = ips[start : start + per_page]
                 total_pages = (len(ips) + per_page - 1) // per_page
-
                 if not page_ips:
-                    return await self.bot.bot_send(
-                        message.channel, content="❌ Page not found"
-                    )
-
+                    return await self.bot.bot_send(message.channel, content="❌ Page not found")
                 output = [f"**Cached IPs (Page {page}/{total_pages}):**"]
                 for ip in page_ips:
                     output.append(f"• {self.bot.ip_handler.format_ip_with_geo(ip)}")
-
                 if total_pages > page:
                     output.append(f"\nUse `{p}ip db list {page + 1}` for next page.")
-                
                 output.append("\n*liforra.de | Liforras Utility bot*")
-
                 await self.bot.bot_send(message.channel, content="\n".join(output))
 
             elif db_subcommand == "search":
                 if len(args) < 3:
-                    return await self.bot.bot_send(
-                        message.channel, content=f"Usage: `{p}ip db search <term>`"
-                    )
-
+                    return await self.bot.bot_send(message.channel, content=f"Usage: `{p}ip db search <term>`")
                 search_term = " ".join(args[2:]).lower()
-                results = []
-
-                for ip, geo in self.bot.ip_handler.ip_geo_data.items():
-                    searchable = " ".join(
-                        [
-                            geo.get("country", ""),
-                            geo.get("regionName", ""),
-                            geo.get("city", ""),
-                            geo.get("isp", ""),
-                            geo.get("org", ""),
-                        ]
-                    ).lower()
-
-                    if search_term in searchable:
-                        results.append(
-                            f"• {self.bot.ip_handler.format_ip_with_geo(ip)}"
-                        )
-
+                results = [f"• {self.bot.ip_handler.format_ip_with_geo(ip)}" for ip, geo in self.bot.ip_handler.ip_geo_data.items() if search_term in " ".join(filter(None, [geo.get(k) for k in ["country", "regionName", "city", "isp", "org"]])).lower()]
                 if not results:
-                    return await self.bot.bot_send(
-                        message.channel,
-                        content=f"❌ No IPs found matching '{search_term}'",
-                    )
-
+                    return await self.bot.bot_send(message.channel, content=f"❌ No IPs found matching '{search_term}'")
                 output = [f"**Search Results for '{search_term}':**"] + results[:25]
                 if len(results) > 25:
                     output.append(f"\n*Showing 25 of {len(results)} results*")
-                
                 output.append("\n*liforra.de | Liforras Utility bot*")
-
                 await self.bot.bot_send(message.channel, content="\n".join(output))
 
             elif db_subcommand == "refresh":
-                await self.bot.bot_send(
-                    message.channel, "⚙️ Refreshing all IP geolocation data..."
-                )
-
+                await self.bot.bot_send(message.channel, "⚙️ Refreshing all IP geolocation data...")
                 all_ips = list(self.bot.ip_handler.ip_geo_data.keys())
-
                 if not all_ips:
-                    return await self.bot.bot_send(
-                        message.channel, content="❌ No IPs in database to refresh"
-                    )
-
+                    return await self.bot.bot_send(message.channel, content="❌ No IPs in database to refresh")
                 geo_results = await self.bot.ip_handler.fetch_ip_info_batch(all_ips)
-
                 from datetime import datetime
-
                 timestamp = datetime.now().isoformat()
                 for ip, geo_data in geo_results.items():
-                    self.bot.ip_handler.ip_geo_data[ip] = {
-                        "country": geo_data.get("country"),
-                        "countryCode": geo_data.get("countryCode"),
-                        "region": geo_data.get("region"),
-                        "regionName": geo_data.get("regionName"),
-                        "city": geo_data.get("city"),
-                        "isp": geo_data.get("isp"),
-                        "org": geo_data.get("org"),
-                        "proxy": geo_data.get("proxy", False),
-                        "hosting": geo_data.get("hosting", False),
-                        "last_updated": timestamp,
-                    }
-
+                    self.bot.ip_handler.ip_geo_data[ip] = {"country": geo_data.get("country"), "countryCode": geo_data.get("countryCode"), "region": geo_data.get("region"), "regionName": geo_data.get("regionName"), "city": geo_data.get("city"), "isp": geo_data.get("isp"), "org": geo_data.get("org"), "proxy": geo_data.get("proxy", False), "hosting": geo_data.get("hosting", False), "last_updated": timestamp}
                 self.bot.ip_handler.save_ip_geo_data()
-
-                await self.bot.bot_send(
-                    message.channel,
-                    content=f"✅ Refreshed {len(geo_results)} IP records\n\n*liforra.de | Liforras Utility bot | Powered by ip-api.com*",
-                )
-
+                await self.bot.bot_send(message.channel, content=f"✅ Refreshed {len(geo_results)} IP records\n\n*liforra.de | Liforras Utility bot | Powered by ip-api.com*")
             else:
-                await self.bot.bot_send(
-                    message.channel,
-                    content=f"❌ Unknown subcommand. Use `{p}help ip` for usage",
-                )
-
+                await self.bot.bot_send(message.channel, content=f"❌ Unknown subcommand. Use `{p}help ip` for usage")
         else:
-            await self.bot.bot_send(
-                message.channel,
-                content=f"❌ Unknown subcommand. Use `{p}help ip` for usage",
-            )
+            await self.bot.bot_send(message.channel, content=f"❌ Unknown subcommand. Use `{p}help ip` for usage")
 
     async def command_playerinfo(self, message: discord.Message, args: List[str]):
         """Gets detailed player information for Minecraft, Steam, or Xbox accounts."""
@@ -584,29 +459,15 @@ class UserCommands:
                     embed = self._format_xbox_info(player, self.bot.discord)
 
                 if embed:
-                    # For self-bots, convert embed to text
                     if self.bot.token_type == "user":
                         text_output = [f"**{embed.title}**"]
-                        if embed.description:
-                            text_output.append(embed.description)
-                        for field in embed.fields:
-                            text_output.append(f"\n**{field.name}**\n{field.value}")
-                        if embed.image.url:
-                            text_output.append(f"\nImage: {embed.image.url}")
-                        text_output.append(f"\n*{embed.footer.text}*")
+                        if embed.description: text_output.append(embed.description)
+                        for field in embed.fields: text_output.append(f"\n**{field.name}**\n{field.value}")
+                        if embed.image and embed.image.url: text_output.append(f"\nImage: {embed.image.url}")
+                        if embed.footer and embed.footer.text: text_output.append(f"\n*{embed.footer.text}*")
                         await self.bot.bot_send(message.channel, content="\n".join(text_output))
                     else:
-                        # Bot accounts can send embeds (but we can't do that from a text command)
-                        # For now, let's just convert to text for simplicity
-                        text_output = [f"**{embed.title}**"]
-                        if embed.description:
-                            text_output.append(embed.description)
-                        for field in embed.fields:
-                            text_output.append(f"\n**{field.name}**\n{field.value}")
-                        if embed.image.url:
-                            text_output.append(f"\nImage: {embed.image.url}")
-                        text_output.append(f"\n*{embed.footer.text}*")
-                        await self.bot.bot_send(message.channel, content="\n".join(text_output))
+                        await message.channel.send(embed=embed)
 
         except httpx.HTTPStatusError as e:
             if account_type == "xbox" and 500 <= e.response.status_code < 600:
@@ -647,25 +508,20 @@ class UserCommands:
     def _format_minecraft_info(self, player: dict, discord_module) -> discord.Embed:
         """Formats Minecraft player information into an embed."""
         embed = discord_module.Embed(
-            title=f"🎮 {player['username']}", 
+            title=f"🎮 Minecraft Profile: {player['username']}", 
             url=f"https://namemc.com/profile/{player['username']}", 
             color=0x2ECC71
         )
         embed.set_thumbnail(url=player['avatar'])
-        embed.add_field(name="🆔 UUID", value=f"`{player['id']}`", inline=False)
+        embed.add_field(name="UUID", value=f"`{player['id']}`", inline=False)
         
-        links = [
-            f"[NameMC](https://namemc.com/profile/{player['username']})",
-            f"[LabyMod](https://laby.net/@{player['username']})",
-            f"[Skin](https://crafatar.com/skins/{player['raw_id']})"
-        ]
-        embed.add_field(name="🔗 Links", value=" • ".join(links), inline=False)
+        links = [f"[NameMC](https://namemc.com/profile/{player['username']})", f"[LabyMod](https://laby.net/@{player['username']})", f"[Skin](https://crafatar.com/skins/{player['raw_id']})"]
+        embed.add_field(name="Links", value=" • ".join(links), inline=False)
         
         if history := player.get('name_history'):
             h_text = " → ".join([f"`{discord_module.utils.escape_markdown(n)}`" for n in history[:8]])
-            if len(history) > 8: 
-                h_text += f"\n*... and {len(history) - 8} more*"
-            embed.add_field(name="📜 Name History", value=h_text, inline=False)
+            if len(history) > 8: h_text += f"\n*... and {len(history) - 8} more*"
+            embed.add_field(name="Name History", value=h_text, inline=False)
         
         embed.set_image(url=f"https://crafatar.com/renders/body/{player['raw_id']}?overlay=true&size=512")
         
@@ -682,7 +538,7 @@ class UserCommands:
         """Formats Steam player information into an embed."""
         meta = player.get('meta', {})
         embed = discord_module.Embed(
-            title=f"🎮 {player.get('username', 'Unknown')}", 
+            title=f" Steam Profile: {player.get('username', 'Unknown')}",
             url=meta.get('profileurl', 'https://steamcommunity.com'),
             color=0x1B2838
         )
@@ -690,28 +546,34 @@ class UserCommands:
             embed.set_thumbnail(url=player['avatar'])
         
         if meta.get('steamid'):
-            embed.add_field(name="🔢 Steam ID64", value=f"`{meta.get('steamid')}`", inline=True)
+            embed.add_field(name="Steam ID64", value=f"`{meta.get('steamid')}`", inline=True)
         if meta.get('steam3id'):
-            embed.add_field(name="📝 Steam3 ID", value=f"`{meta.get('steam3id')}`", inline=True)
+            embed.add_field(name="Steam3 ID", value=f"`{meta.get('steam3id')}`", inline=True)
         
         if meta.get('communityvisibilitystate'):
             visibility_map = {3: "Public", 2: "Friends Only", 1: "Private"}
-            embed.add_field(
-                name="👁️ Profile", 
-                value=visibility_map.get(meta.get('communityvisibilitystate'), "Unknown"),
-                inline=True
-            )
+            embed.add_field(name="Profile", value=visibility_map.get(meta.get('communityvisibilitystate'), "Unknown"), inline=True)
         
         if meta.get('timecreated'):
             from datetime import datetime
-            created_time = datetime.fromtimestamp(meta.get('timecreated')).strftime('%Y-%m-%d')
-            embed.add_field(name="📅 Account Created", value=created_time, inline=True)
-        
-        if meta.get('loccountrycode'):
-            embed.add_field(name="🌍 Country", value=meta.get('loccountrycode'), inline=True)
-        
+            created_ts = int(meta.get('timecreated'))
+            embed.add_field(name="Account Created", value=f"<t:{created_ts}:D>", inline=True)
+
+        country_code = meta.get('loccountrycode')
+        state_code = meta.get('locstatecode')
+        city_id = meta.get('loccityid')
+
+        if country_code:
+            location_names = self.bot.steam_location_handler.get_location_names(country_code, state_code, city_id)
+            location_parts = [name for name in [location_names.get("city"), location_names.get("state"), location_names.get("country")] if name]
+            if location_parts:
+                flag = COUNTRY_FLAGS.get(country_code, "🌍")
+                embed.add_field(name=f"{flag} Location", value=", ".join(location_parts), inline=True)
+            else:
+                 embed.add_field(name="🌍 Country", value=country_code, inline=True)
+
         if meta.get('realname'):
-            embed.add_field(name="👤 Real Name", value=meta.get('realname'), inline=True)
+            embed.add_field(name="Real Name", value=meta.get('realname'), inline=True)
 
         if cached_at := player.get('meta', {}).get('cached_at'):
             embed.set_footer(text="Powered by PlayerDB • Data cached")
@@ -725,25 +587,25 @@ class UserCommands:
     def _format_xbox_info(self, player: dict, discord_module) -> discord.Embed:
         """Formats Xbox player information into an embed."""
         embed = discord_module.Embed(
-            title=f"🎮 {player.get('username', player.get('gamertag', 'Unknown'))}", 
+            title=f"🎮 Xbox Profile: {player.get('username', player.get('gamertag', 'Unknown'))}", 
             color=0x107C10
         )
         if player.get('avatar'):
             embed.set_thumbnail(url=player['avatar'])
         
         if player.get('xuid'):
-            embed.add_field(name="🔢 XUID", value=f"`{player['xuid']}`", inline=True)
+            embed.add_field(name="XUID", value=f"`{player['xuid']}`", inline=True)
         if player.get('gamerscore'):
-            embed.add_field(name="🏆 Gamerscore", value=f"{player['gamerscore']:,}", inline=True)
+            embed.add_field(name="Gamerscore", value=f"{player['gamerscore']:,}", inline=True)
         if player.get('account_tier'):
-            embed.add_field(name="⭐ Tier", value=player['account_tier'], inline=True)
+            embed.add_field(name="Tier", value=player['account_tier'], inline=True)
         if player.get('reputation'):
-            embed.add_field(name="📊 Reputation", value=player['reputation'], inline=True)
+            embed.add_field(name="Reputation", value=player['reputation'], inline=True)
         if player.get('bio'):
             bio = player['bio']
             if len(bio) > 100:
                 bio = bio[:97] + "..."
-            embed.add_field(name="📝 Bio", value=bio, inline=False)
+            embed.add_field(name="Bio", value=bio, inline=False)
             
         if cached_at := player.get('meta', {}).get('cached_at'):
             embed.set_footer(text="Powered by PlayerDB • Data cached")
@@ -791,17 +653,11 @@ class UserCommands:
                     output.append(f"**Last Seen:** {last_seen} UTC")
                 
                 history = sorted(data["history"], key=lambda x: x.get("id", 0))
-                
                 output.append(f"\n**Name Changes ({len(history)} recorded):**")
                 
                 for idx, entry in enumerate(history, 1):
                     name = entry['name']
-                    
-                    if entry.get("changed_at") is None:
-                        label = "Original" if idx == 1 else "Current"
-                    else:
-                        label = entry["changed_at"][:10]
-                    
+                    label = "Original" if entry.get("changed_at") is None and idx == 1 else ("Current" if entry.get("changed_at") is None else entry["changed_at"][:10])
                     output.append(f"{idx}. `{name}` - {label}")
                 
                 output.append(f"\n**Profile Links:**")
@@ -814,10 +670,7 @@ class UserCommands:
                 await self.bot.bot_send(message.channel, content="\n".join(output))
                 
         except httpx.HTTPStatusError as e:
-            await self.bot.bot_send(
-                message.channel,
-                content=f"❌ API Error: {e.response.status_code}"
-            )
+            await self.bot.bot_send(message.channel, content=f"❌ API Error: {e.response.status_code}")
         except Exception as e:
             tb_str = ''.join(traceback.format_exception(type(e), e, e.__traceback__))
             error_message = f"❌ **An unexpected error occurred:**\n```py\n{tb_str[:1800]}\n```"
@@ -867,33 +720,24 @@ class UserCommands:
                     )
                 
                 flag = COUNTRY_FLAGS.get(data.get("country_code", ""), "🌐")
-                
                 output = [
-                    f"📱 **Phone Number Information**",
-                    f"",
+                    f"📱 **Phone Number Information**", "",
                     f"**Number:** `{data.get('number', 'N/A')}`",
                     f"**Local Format:** `{data.get('local_format', 'N/A')}`",
-                    f"**International Format:** `{data.get('international_format', 'N/A')}`",
-                    f"",
+                    f"**International Format:** `{data.get('international_format', 'N/A')}`", "",
                     f"{flag} **Country:** {data.get('country_name', 'N/A')} ({data.get('country_code', 'N/A')})",
-                    f"**Country Prefix:** {data.get('country_prefix', 'N/A')}",
-                    f"",
+                    f"**Country Prefix:** {data.get('country_prefix', 'N/A')}", "",
                     f"**📍 Location:** {data.get('location', 'N/A') or 'Not available'}",
                     f"**📡 Carrier:** {data.get('carrier', 'N/A')}",
-                    f"**📞 Line Type:** {data.get('line_type', 'N/A').title()}",
-                    f"",
+                    f"**📞 Line Type:** {data.get('line_type', 'N/A').title()}", "",
                     f"*liforra.de | Liforras Utility bot | Powered by NumLookupAPI*"
                 ]
-                
                 await self.bot.bot_send(message.channel, content="\n".join(output))
                 
         except httpx.HTTPStatusError as e:
-            if e.response.status_code == 401:
-                await self.bot.bot_send(message.channel, "❌ Invalid NumLookupAPI key.")
-            elif e.response.status_code == 429:
-                await self.bot.bot_send(message.channel, "⏱️ API rate limit exceeded. Try again later.")
-            else:
-                await self.bot.bot_send(message.channel, f"❌ API Error: {e.response.status_code}")
+            if e.response.status_code == 401: await self.bot.bot_send(message.channel, "❌ Invalid NumLookupAPI key.")
+            elif e.response.status_code == 429: await self.bot.bot_send(message.channel, "⏱️ API rate limit exceeded. Try again later.")
+            else: await self.bot.bot_send(message.channel, f"❌ API Error: {e.response.status_code}")
         except Exception as e:
             tb_str = ''.join(traceback.format_exception(type(e), e, e.__traceback__))
             error_message = f"❌ **An unexpected error occurred:**\n```py\n{tb_str[:1800]}\n```"
@@ -922,81 +766,40 @@ class UserCommands:
         is_admin = str(message.author.id) in self.bot.config.admin_ids
         
         if subcommand == "host":
-            if len(args) < 2:
-                return await self.bot.bot_send(
-                    message.channel,
-                    content=f"Usage: `{p}shodan host <ip>`"
-                )
-            
+            if len(args) < 2: return await self.bot.bot_send(message.channel, content=f"Usage: `{p}shodan host <ip>`")
             await self._shodan_host(message, args[1])
         
         elif subcommand in ["search", "count"]:
-            if not is_admin:
-                return await self.bot.bot_send(
-                    message.channel,
-                    content="❌ This command is admin-only."
-                )
-            
-            if len(args) < 2:
-                return await self.bot.bot_send(
-                    message.channel,
-                    content=f"Usage: `{p}shodan {subcommand} <query>`"
-                )
-            
+            if not is_admin: return await self.bot.bot_send(message.channel, content="❌ This command is admin-only.")
+            if len(args) < 2: return await self.bot.bot_send(message.channel, content=f"Usage: `{p}shodan {subcommand} <query>`")
             query = " ".join(args[1:])
-            
-            if subcommand == "search":
-                await self._shodan_search(message, query)
-            else:
-                await self._shodan_count(message, query)
+            if subcommand == "search": await self._shodan_search(message, query)
+            else: await self._shodan_count(message, query)
         
         else:
-            await self.bot.bot_send(
-                message.channel,
-                content=f"❌ Unknown subcommand. Use `{p}help shodan` for usage."
-            )
+            await self.bot.bot_send(message.channel, content=f"❌ Unknown subcommand. Use `{p}help shodan` for usage.")
 
     async def _shodan_host(self, message: discord.Message, ip: str):
         """Gets detailed information about a host from Shodan."""
         
         if not is_valid_ip(ip):
-            return await self.bot.bot_send(
-                message.channel,
-                content="❌ Invalid IP address format."
-            )
+            return await self.bot.bot_send(message.channel, content="❌ Invalid IP address format.")
         
         await self.bot.bot_send(message.channel, f"⚙️ Fetching Shodan data for `{ip}`...")
         
         try:
             async with httpx.AsyncClient() as client:
-                response = await client.get(
-                    f"https://api.shodan.io/shodan/host/{ip}",
-                    params={"key": self.bot.config.shodan_api_key},
-                    timeout=20
-                )
+                response = await client.get(f"https://api.shodan.io/shodan/host/{ip}", params={"key": self.bot.config.shodan_api_key}, timeout=20)
                 response.raise_for_status()
                 data = response.json()
                 
                 flag = COUNTRY_FLAGS.get(data.get("country_code", ""), "🌐")
-                
                 ip_header = f"**Shodan Host Information for [{ip}](<https://www.shodan.io/host/{ip}>):**" if not is_valid_ipv6(ip) else f"**Shodan Host Information for `{ip}`:**"
                 
-                output = [
-                    ip_header,
-                    f"{flag} **Country:** {data.get('country_name', 'N/A')}",
-                    f"**Organization:** {data.get('org', 'N/A')}",
-                    f"**ISP:** {data.get('isp', 'N/A')}",
-                    f"**ASN:** {data.get('asn', 'N/A')}",
-                    f"**Hostnames:** {', '.join(data.get('hostnames', [])) or 'None'}",
-                    f"",
-                    f"**Open Ports ({len(data.get('ports', []))}):** {', '.join(map(str, data.get('ports', []))) or 'None'}",
-                    f"**Last Update:** {data.get('last_update', 'N/A')[:10]}",
-                ]
+                output = [ip_header, f"{flag} **Country:** {data.get('country_name', 'N/A')}", f"**Organization:** {data.get('org', 'N/A')}", f"**ISP:** {data.get('isp', 'N/A')}", f"**ASN:** {data.get('asn', 'N/A')}", f"**Hostnames:** {', '.join(data.get('hostnames', [])) or 'None'}", "", f"**Open Ports ({len(data.get('ports', []))}):** {', '.join(map(str, data.get('ports', []))) or 'None'}", f"**Last Update:** {data.get('last_update', 'N/A')[:10]}"]
                 
                 if vulns := data.get('vulns', []):
-                    vuln_list = ', '.join(vulns[:10])
-                    if len(vulns) > 10:
-                        vuln_list += f" (+{len(vulns) - 10} more)"
+                    vuln_list = ', '.join(vulns[:10]) + (f" (+{len(vulns) - 10} more)" if len(vulns) > 10 else "")
                     output.append(f"\n**⚠️ Vulnerabilities ({len(vulns)}):** {vuln_list}")
                 
                 if tags := data.get('tags', []):
@@ -1007,12 +810,9 @@ class UserCommands:
                 await self.bot.bot_send(message.channel, content="\n".join(output))
                 
         except httpx.HTTPStatusError as e:
-            if e.response.status_code == 401:
-                await self.bot.bot_send(message.channel, "❌ Invalid Shodan API key.")
-            elif e.response.status_code == 404:
-                await self.bot.bot_send(message.channel, f"❌ No information available for `{ip}` in Shodan.")
-            else:
-                await self.bot.bot_send(message.channel, f"❌ API Error: {e.response.status_code}")
+            if e.response.status_code == 401: await self.bot.bot_send(message.channel, "❌ Invalid Shodan API key.")
+            elif e.response.status_code == 404: await self.bot.bot_send(message.channel, f"❌ No information available for `{ip}` in Shodan.")
+            else: await self.bot.bot_send(message.channel, f"❌ API Error: {e.response.status_code}")
         except Exception as e:
             tb_str = ''.join(traceback.format_exception(type(e), e, e.__traceback__))
             error_message = f"❌ **An unexpected error occurred:**\n```py\n{tb_str[:1800]}\n```"
@@ -1022,39 +822,23 @@ class UserCommands:
         """Searches Shodan (admin only)."""
         try:
             async with httpx.AsyncClient() as client:
-                response = await client.get(
-                    "https://api.shodan.io/shodan/host/search",
-                    params={"key": self.bot.config.shodan_api_key, "query": query},
-                    timeout=20
-                )
+                response = await client.get("https://api.shodan.io/shodan/host/search", params={"key": self.bot.config.shodan_api_key, "query": query}, timeout=20)
                 response.raise_for_status()
                 data = response.json()
                 
-                total = data.get('total', 0)
-                matches = data.get('matches', [])[:5]
-                
-                output = [
-                    f"🔍 **Shodan Search Results for `{query}`:**",
-                    f"**Total Results:** {total:,}",
-                    f""
-                ]
+                total, matches = data.get('total', 0), data.get('matches', [])[:5]
+                output = [f"🔍 **Shodan Search Results for `{query}`:**", f"**Total Results:** {total:,}", ""]
                 
                 for idx, match in enumerate(matches, 1):
-                    ip = match.get('ip_str', 'N/A')
-                    port = match.get('port', 'N/A')
-                    org = match.get('org', 'N/A')
-                    hostnames = ', '.join(match.get('hostnames', [])) or 'None'
-                    
-                    output.append(f"**{idx}. {ip}:{port}**")
-                    output.append(f"   Organization: {org}")
-                    output.append(f"   Hostnames: {hostnames}")
+                    output.append(f"**{idx}. {match.get('ip_str', 'N/A')}:{match.get('port', 'N/A')}**")
+                    output.append(f"   Organization: {match.get('org', 'N/A')}")
+                    output.append(f"   Hostnames: {', '.join(match.get('hostnames', [])) or 'None'}")
                     output.append("")
                 
                 if total > 5:
                     output.append(f"*Showing 5 of {total:,} results. View all at https://www.shodan.io/search?query={query.replace(' ', '+')}*")
                 
                 output.append("\n*liforra.de | Liforras Utility bot | Powered by Shodan*")
-                
                 await self.bot.bot_send(message.channel, content="\n".join(output))
                 
         except Exception as e:
@@ -1066,23 +850,11 @@ class UserCommands:
         """Counts Shodan search results (admin only)."""
         try:
             async with httpx.AsyncClient() as client:
-                response = await client.get(
-                    "https://api.shodan.io/shodan/host/count",
-                    params={"key": self.bot.config.shodan_api_key, "query": query},
-                    timeout=20
-                )
+                response = await client.get("https://api.shodan.io/shodan/host/count", params={"key": self.bot.config.shodan_api_key, "query": query}, timeout=20)
                 response.raise_for_status()
                 data = response.json()
-                
                 total = data.get('total', 0)
-                
-                output = [
-                    f"📊 **Shodan Count for `{query}`:**",
-                    f"**Total Results:** {total:,}",
-                    f"",
-                    f"*liforra.de | Liforras Utility bot | Powered by Shodan*"
-                ]
-                
+                output = [f"📊 **Shodan Count for `{query}`:**", f"**Total Results:** {total:,}", "", "*liforra.de | Liforras Utility bot | Powered by Shodan*"]
                 await self.bot.bot_send(message.channel, content="\n".join(output))
                 
         except Exception as e:
@@ -1104,24 +876,12 @@ class UserCommands:
 
         if subcommand == "stats":
             total_users = len(self.bot.alts_handler.alts_data)
-            all_ips = set().union(
-                *(
-                    data.get("ips", set())
-                    for data in self.bot.alts_handler.alts_data.values()
-                )
-            )
+            all_ips = set().union(*(data.get("ips", set()) for data in self.bot.alts_handler.alts_data.values()))
             stats = f"**Alts DB Stats:**\n- Users: {total_users}\n- Unique IPs: {len(all_ips)}\n- Cached IP Geo Data: {len(self.bot.ip_handler.ip_geo_data)}\n\n*liforra.de | Liforras Utility bot*"
             return await self.bot.bot_send(message.channel, content=stats)
 
         elif subcommand == "list":
-            
-            users = sorted(
-                [
-                    user
-                    for user in self.bot.alts_handler.alts_data.keys()
-                    if not (is_valid_ipv4(user) or is_valid_ipv6(user))
-                ]
-            )
+            users = sorted([user for user in self.bot.alts_handler.alts_data.keys() if not (is_valid_ipv4(user) or is_valid_ipv6(user))])
             page = int(args[1]) if len(args) > 1 and args[1].isdigit() else 1
             per_page = 20
             start = (page - 1) * per_page
@@ -1135,103 +895,67 @@ class UserCommands:
             for user in page_users:
                 data = self.bot.alts_handler.alts_data[user]
                 formatted_user_name = format_alt_name(user)
-                output.append(
-                    f"• {formatted_user_name} - {len(data.get('alts', []))} alts, {len(data.get('ips', []))} IPs"
-                )
+                output.append(f"• {formatted_user_name} - {len(data.get('alts', []))} alts, {len(data.get('ips', []))} IPs")
             if total_pages > page:
                 output.append(f"\nUse `{p}alts list {page + 1}` for next page.")
-            
             output.append("\n*liforra.de | Liforras Utility bot*")
             await self.bot.bot_send(message.channel, content="\n".join(output))
 
         else:
             search_term = args[0]
             found_user = None
+            lowercase_map = {k.lower(): k for k in self.bot.alts_handler.alts_data.keys()}
 
-            lowercase_map = {
-                k.lower(): k for k in self.bot.alts_handler.alts_data.keys()
-            }
-
-            if search_term.startswith("."):
-                if search_term.lower() in lowercase_map:
-                    found_user = lowercase_map[search_term.lower()]
-            else:
-                search_candidates = [
-                    search_term,
-                    f".{search_term}",
-                    f"...{search_term}",
-                ]
-                for candidate in search_candidates:
-                    if candidate.lower() in lowercase_map:
-                        found_user = lowercase_map[candidate.lower()]
-                        break
+            for candidate in [search_term, f".{search_term}", f"...{search_term}"]:
+                if candidate.lower() in lowercase_map:
+                    found_user = lowercase_map[candidate.lower()]
+                    break
 
             if not found_user:
-                return await self.bot.bot_send(
-                    message.channel, f"❌ No data for `{search_term}`"
-                )
+                return await self.bot.bot_send(message.channel, f"❌ No data for `{search_term}`")
 
             data = self.bot.alts_handler.alts_data[found_user]
             alts = sorted(list(data.get("alts", set())))
             ips = sorted(list(data.get("ips", set())))
-            
             is_admin = str(message.author.id) in self.bot.config.admin_ids
-
-            country_counts = {}
-            has_used_vpn = False
+            country_counts, has_used_vpn = {}, False
             
             for ip in ips:
                 if ip in self.bot.ip_handler.ip_geo_data:
                     geo = self.bot.ip_handler.ip_geo_data[ip]
-                    
                     vpn_provider = self.bot.ip_handler.detect_vpn_provider(geo.get("isp", ""), geo.get("org", ""))
                     is_vpn = vpn_provider or geo.get("proxy") or geo.get("hosting")
-                    
-                    if is_vpn:
-                        has_used_vpn = True
+                    if is_vpn: has_used_vpn = True
                     else:
-                        country = geo.get("country")
-                        country_code = geo.get("countryCode")
+                        country, country_code = geo.get("country"), geo.get("countryCode")
                         if country and country_code:
                             weight = 0.3 if country_code == "US" else 1.0
                             country_counts[country] = country_counts.get(country, 0) + weight
             
             likely_location = None
             if country_counts:
-                likely_location = max(country_counts, key=country_counts.get)
+                likely_location_name = max(country_counts, key=country_counts.get)
                 for ip in ips:
-                    if ip in self.bot.ip_handler.ip_geo_data:
-                        geo = self.bot.ip_handler.ip_geo_data[ip]
-                        if geo.get("country") == likely_location:
-                            likely_location = f"{COUNTRY_FLAGS.get(geo.get('countryCode', ''), '🌐')} {likely_location}"
-                            break
+                    if ip in self.bot.ip_handler.ip_geo_data and self.bot.ip_handler.ip_geo_data[ip].get("country") == likely_location_name:
+                        likely_location = f"{COUNTRY_FLAGS.get(self.bot.ip_handler.ip_geo_data[ip].get('countryCode', ''), '🌐')} {likely_location_name}"
+                        break
 
             formatted_found_user = format_alt_name(found_user)
             output = [f"**Alts data for {formatted_found_user}:**"]
-            
-            if likely_location:
-                output.append(f"**Likely Location:** {likely_location}")
-            
-            if has_used_vpn:
-                output.append(f"**VPN Usage:** 🔒 Yes")
-
+            if likely_location: output.append(f"**Likely Location:** {likely_location}")
+            if has_used_vpn: output.append(f"**VPN Usage:** 🔒 Yes")
             if alts:
                 formatted_alts = [format_alt_name(alt) for alt in alts]
                 grid_lines = format_alts_grid(formatted_alts, max_per_line=3)
                 output.append(f"\n**Alts ({len(alts)}):**")
                 output.extend(grid_lines)
-
             if ips:
                 if is_admin:
                     output.append(f"\n**IPs ({len(ips)}):**")
-                    for ip in ips:
-                        output.append(f"→ {self.bot.ip_handler.format_ip_with_geo(ip)}")
+                    for ip in ips: output.append(f"→ {self.bot.ip_handler.format_ip_with_geo(ip)}")
                 else:
                     output.append(f"\n**IPs:** {len(ips)} on record *(use `/alts {search_term} _ip:True` to view - admin only)*")
-
-            output.append(
-                f"\n*First seen: {data.get('first_seen', 'N/A')[:10]} | Last updated: {data.get('last_updated', 'N/A')[:10]}*"
-            )
+            output.append(f"\n*First seen: {data.get('first_seen', 'N/A')[:10]} | Last updated: {data.get('last_updated', 'N/A')[:10]}*")
             output.append("\n*liforra.de | Liforras Utility bot*")
             await self.bot.bot_send(message.channel, content="\n".join(output))
 
@@ -1241,26 +965,16 @@ class UserCommands:
 
         if not args:
             user_cmds = ", ".join(f"`{cmd}`" for cmd in self.bot.user_commands.keys())
-            help_text = (
-                f"**Commands:** {user_cmds}\n*Type `{p}help <command>` for more info.*"
-            )
+            help_text = f"**Commands:** {user_cmds}\n*Type `{p}help <command>` for more info.*"
             if str(message.author.id) in self.bot.config.admin_ids:
-                admin_cmds = ", ".join(
-                    f"`{cmd}`" for cmd in self.bot.admin_commands.keys()
-                )
+                admin_cmds = ", ".join(f"`{cmd}`" for cmd in self.bot.admin_commands.keys())
                 help_text += f"\n\n**Admin Commands:** {admin_cmds}"
             help_text += "\n\n*liforra.de | Liforras Utility bot*"
             await self.bot.bot_send(message.channel, content=help_text)
         else:
             cmd_name = args[0].lower()
             if cmd_name in self.bot.command_help_texts:
-                help_content = self.bot.command_help_texts[cmd_name].format(p=p)
-                help_content += "\n\n*liforra.de | Liforras Utility bot*"
-                await self.bot.bot_send(
-                    message.channel,
-                    content=help_content,
-                )
+                help_content = self.bot.command_help_texts[cmd_name].format(p=p) + "\n\n*liforra.de | Liforras Utility bot*"
+                await self.bot.bot_send(message.channel, content=help_content)
             else:
-                await self.bot.bot_send(
-                    message.channel, content=f"❌ Command `{cmd_name}` not found."
-                )
+                await self.bot.bot_send(message.channel, content=f"❌ Command `{cmd_name}` not found.")
