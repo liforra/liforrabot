@@ -501,6 +501,7 @@ def register_slash_commands(tree, bot: "Bot"):
 
     @bot.app_commands.allowed_installs(guilds=True, users=True)
     @bot.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+    @bot.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
     @tree.command(name="playerinfo", description="Get detailed information about a player")
     @bot.app_commands.describe(
         username="The username or ID to look up",
@@ -523,18 +524,29 @@ def register_slash_commands(tree, bot: "Bot"):
             return
         await interaction.response.defer(ephemeral=_ephemeral)
         
-        embed = None # Initialize embed to prevent UnboundLocalError
+        embed = None
         try:
             if account_type == "steam" and not username.isdigit():
                 if resolved_id := await bot.user_commands_handler._resolve_steam_vanity_url(username):
                     username = resolved_id
             
+            url = f"https://playerdb.co/api/player/{account_type}/{username}"
+            print(f"[PlayerInfo] Requesting: {url}")  # Debug print
+            
             async with httpx.AsyncClient() as client:
                 response = await client.get(
-                    f"https://playerdb.co/api/player/{account_type}/{username}",
-                    headers={"User-Agent": "https://liforra.de"},
-                    timeout=10
+                    url,
+                    headers={
+                        "User-Agent": "LiforraBot/1.0 (+https://liforra.de)",
+                        "Accept": "application/json"
+                    },
+                    timeout=15,
+                    follow_redirects=True
                 )
+                
+                print(f"[PlayerInfo] Status: {response.status_code}")  # Debug print
+                print(f"[PlayerInfo] Response: {response.text[:200]}")  # Debug print
+                
                 response.raise_for_status()
                 data = response.json()
                 
@@ -559,11 +571,15 @@ def register_slash_commands(tree, bot: "Bot"):
                     await interaction.followup.send("❌ Failed to generate player info embed.", ephemeral=_ephemeral)
 
         except httpx.HTTPStatusError as e:
+            print(f"[PlayerInfo] HTTP Error: {e}")  # Debug print
+            print(f"[PlayerInfo] Response body: {e.response.text}")  # Debug print
+            
             if account_type == "xbox" and 500 <= e.response.status_code < 600:
-                await interaction.followup.send(f"❌ The Xbox lookup API returned an error ({e.response.status_code}). It might be temporarily down.", ephemeral=_ephemeral)
+                await interaction.followup.send(f"❌ The Xbox lookup API returned an error ({e.response.status_code}). Response: {e.response.text[:200]}", ephemeral=_ephemeral)
             else:
                 await interaction.followup.send(f"❌ API Error: {e.response.status_code}", ephemeral=_ephemeral)
         except Exception as e:
+            print(f"[PlayerInfo] Exception: {e}")  # Debug print
             tb_str = ''.join(traceback.format_exception(type(e), e, e.__traceback__))
             error_message = f"❌ **An unexpected error occurred:**\n```py\n{tb_str[:1800]}\n```"
             await interaction.followup.send(error_message, ephemeral=_ephemeral)
