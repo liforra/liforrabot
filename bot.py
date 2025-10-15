@@ -114,6 +114,8 @@ def register_slash_commands(tree, bot: "Bot"):
 
     # ==================== USER COMMANDS ====================
     
+    @bot.app_commands.allowed_installs(guilds=True, users=True)
+    @bot.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
     @tree.command(name="trump", description="Get a random Trump quote")
     @bot.app_commands.describe(_ephemeral="Show the response only to you (default: False)")
     async def trump_slash(interaction: discord.Interaction, _ephemeral: bool = False):
@@ -133,6 +135,8 @@ def register_slash_commands(tree, bot: "Bot"):
         except Exception as e:
             await interaction.followup.send(f"❌ Error: {type(e).__name__}", ephemeral=_ephemeral)
 
+    @bot.app_commands.allowed_installs(guilds=True, users=True)
+    @bot.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
     @tree.command(name="tech", description="Get a random tech tip or fact")
     @bot.app_commands.describe(_ephemeral="Show the response only to you (default: False)")
     async def tech_slash(interaction: discord.Interaction, _ephemeral: bool = False):
@@ -152,6 +156,8 @@ def register_slash_commands(tree, bot: "Bot"):
         except Exception as e:
             await interaction.followup.send(f"❌ Error: {type(e).__name__}", ephemeral=_ephemeral)
 
+    @bot.app_commands.allowed_installs(guilds=True, users=True)
+    @bot.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
     @tree.command(name="fact", description="Get a random or daily useless fact")
     @bot.app_commands.describe(
         fact_type="Type of fact", 
@@ -190,6 +196,8 @@ def register_slash_commands(tree, bot: "Bot"):
         except Exception as e:
             await interaction.followup.send(f"❌ Error: {type(e).__name__}", ephemeral=_ephemeral)
 
+    @bot.app_commands.allowed_installs(guilds=True, users=True)
+    @bot.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
     @tree.command(name="search", description="Search Google using SerpAPI")
     @bot.app_commands.describe(
         query="Your search query",
@@ -273,6 +281,8 @@ def register_slash_commands(tree, bot: "Bot"):
         except Exception as e:
             await interaction.followup.send(f"❌ An unexpected error occurred: {type(e).__name__}", ephemeral=_ephemeral)
 
+    @bot.app_commands.allowed_installs(guilds=True, users=True)
+    @bot.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
     @tree.command(name="websites", description="Check status of configured websites")
     @bot.app_commands.describe(_ephemeral="Show the response only to you (default: False)")
     async def websites_slash(interaction: discord.Interaction, _ephemeral: bool = False):
@@ -300,6 +310,8 @@ def register_slash_commands(tree, bot: "Bot"):
         embed.set_footer(text="liforra.de | Liforras Utility bot")
         await interaction.followup.send(embed=embed, ephemeral=_ephemeral)
 
+    @bot.app_commands.allowed_installs(guilds=True, users=True)
+    @bot.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
     @tree.command(name="pings", description="Ping configured devices")
     @bot.app_commands.describe(_ephemeral="Show the response only to you (default: False)")
     async def pings_slash(interaction: discord.Interaction, _ephemeral: bool = False):
@@ -324,6 +336,8 @@ def register_slash_commands(tree, bot: "Bot"):
         embed.set_footer(text=f"liforra.de | Liforras Utility bot | {online_count}/{len(results)} devices online")
         await interaction.followup.send(embed=embed, ephemeral=_ephemeral)
 
+    @bot.app_commands.allowed_installs(guilds=True, users=True)
+    @bot.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
     @tree.command(name="ip", description="Get information about an IP address")
     @bot.app_commands.describe(address="The IP address to look up (IPv4 or IPv6)", _ephemeral="Show the response only to you (default: False)")
     async def ip_slash(interaction: discord.Interaction, address: str, _ephemeral: bool = False):
@@ -373,6 +387,8 @@ def register_slash_commands(tree, bot: "Bot"):
         embed.set_footer(text="liforra.de | Liforras Utility bot | Powered by ip-api.com")
         await interaction.followup.send(embed=embed, ephemeral=_ephemeral)
 
+    @bot.app_commands.allowed_installs(guilds=True, users=True)
+    @bot.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
     @tree.command(name="ipdbinfo", description="Get cached information about an IP from database")
     @bot.app_commands.describe(address="The IP address to look up", _ephemeral="Show the response only to you (default: False)")
     async def ipdbinfo_slash(interaction: discord.Interaction, address: str, _ephemeral: bool = False):
@@ -400,6 +416,8 @@ def register_slash_commands(tree, bot: "Bot"):
         embed.set_footer(text="liforra.de | Liforras Utility bot")
         await interaction.response.send_message(embed=embed, ephemeral=_ephemeral)
 
+    @bot.app_commands.allowed_installs(guilds=True, users=True)
+    @bot.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
     @tree.command(name="ipdblist", description="List all cached IPs in database")
     @bot.app_commands.describe(page="Page number (default: 1)", _ephemeral="Show the response only to you (default: False)")
     async def ipdblist_slash(interaction: discord.Interaction, page: int = 1, _ephemeral: bool = False):
@@ -429,6 +447,8 @@ def register_slash_commands(tree, bot: "Bot"):
             view.current_page = page_to_show
         await interaction.followup.send(embed=embeds[page_to_show], view=view, ephemeral=_ephemeral)
 
+    @bot.app_commands.allowed_installs(guilds=True, users=True)
+    @bot.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
     @tree.command(name="ipdbsearch", description="Search IPs by country, city, or ISP")
     @bot.app_commands.describe(term="Search term", _ephemeral="Show the response only to you (default: False)")
     async def ipdbsearch_slash(interaction: discord.Interaction, term: str, _ephemeral: bool = False):
@@ -457,6 +477,8 @@ def register_slash_commands(tree, bot: "Bot"):
         view = PaginationView(embeds, bot.discord) if len(embeds) > 1 else None
         await interaction.followup.send(embed=embeds[0], view=view, ephemeral=_ephemeral)
 
+    @bot.app_commands.allowed_installs(guilds=True, users=True)
+    @bot.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
     @tree.command(name="ipdbstats", description="Show IP database statistics")
     @bot.app_commands.describe(_ephemeral="Show the response only to you (default: False)")
     async def ipdbstats_slash(interaction: discord.Interaction, _ephemeral: bool = False):
@@ -477,6 +499,8 @@ def register_slash_commands(tree, bot: "Bot"):
         embed.set_footer(text="liforra.de | Liforras Utility bot")
         await interaction.response.send_message(embed=embed, ephemeral=_ephemeral)
 
+    @bot.app_commands.allowed_installs(guilds=True, users=True)
+    @bot.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
     @tree.command(name="playerinfo", description="Get detailed information about a player")
     @bot.app_commands.describe(
         username="The username or ID to look up",
@@ -544,6 +568,8 @@ def register_slash_commands(tree, bot: "Bot"):
             error_message = f"❌ **An unexpected error occurred:**\n```py\n{tb_str[:1800]}\n```"
             await interaction.followup.send(error_message, ephemeral=_ephemeral)
 
+    @bot.app_commands.allowed_installs(guilds=True, users=True)
+    @bot.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
     @tree.command(name="namehistory", description="Get complete Minecraft name change history")
     @bot.app_commands.describe(username="The Minecraft username to look up", _ephemeral="Show the response only to you (default: False)")
     async def namehistory_slash(interaction: discord.Interaction, username: str, _ephemeral: bool = False):
@@ -598,6 +624,8 @@ def register_slash_commands(tree, bot: "Bot"):
             error_message = f"❌ **An unexpected error occurred:**\n```py\n{tb_str[:1800]}\n```"
             await interaction.followup.send(error_message, ephemeral=_ephemeral)
 
+    @bot.app_commands.allowed_installs(guilds=True, users=True)
+    @bot.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
     @tree.command(name="alts", description="Look up a user's known alts")
     @bot.app_commands.describe(
         username="The username to look up",
@@ -662,6 +690,8 @@ def register_slash_commands(tree, bot: "Bot"):
         view = PaginationView(embeds, bot.discord) if len(embeds) > 1 else None
         await interaction.followup.send(embed=embeds[0], view=view, ephemeral=_ephemeral)
 
+    @bot.app_commands.allowed_installs(guilds=True, users=True)
+    @bot.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
     @tree.command(name="phone", description="Look up phone number information")
     @bot.app_commands.describe(number="Phone number with country code (e.g., +4917674905246)", _ephemeral="Show the response only to you (default: False)")
     async def phone_slash(interaction: discord.Interaction, number: str, _ephemeral: bool = False):
@@ -714,6 +744,8 @@ def register_slash_commands(tree, bot: "Bot"):
             error_message = f"❌ **An unexpected error occurred:**\n```py\n{tb_str[:1800]}\n```"
             await interaction.followup.send(error_message, ephemeral=_ephemeral)
 
+    @bot.app_commands.allowed_installs(guilds=True, users=True)
+    @bot.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
     @tree.command(name="shodan", description="Get Shodan host information")
     @bot.app_commands.describe(ip="IP address to look up", _ephemeral="Show the response only to you (default: False)")
     async def shodan_slash(interaction: discord.Interaction, ip: str, _ephemeral: bool = False):
@@ -767,6 +799,8 @@ def register_slash_commands(tree, bot: "Bot"):
             error_message = f"❌ **An unexpected error occurred:**\n```py\n{tb_str[:1800]}\n```"
             await interaction.followup.send(error_message, ephemeral=_ephemeral)
 
+    @bot.app_commands.allowed_installs(guilds=True, users=True)
+    @bot.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
     @tree.command(name="help", description="Show available commands")
     @bot.app_commands.describe(_ephemeral="Show the response only to you (default: False)")
     async def help_slash(interaction: discord.Interaction, _ephemeral: bool = False):
@@ -782,6 +816,8 @@ def register_slash_commands(tree, bot: "Bot"):
         
     # ==================== ADMIN COMMANDS ====================
 
+    @bot.app_commands.allowed_installs(guilds=True, users=True)
+    @bot.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
     @tree.command(name="reloadconfig", description="[ADMIN] Reload all configuration files")
     @bot.app_commands.describe(_ephemeral="Show the response only to you (default: False)")
     async def reloadconfig_slash(interaction: discord.Interaction, _ephemeral: bool = False):
