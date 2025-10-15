@@ -811,8 +811,165 @@ class Bot:
 
         await self.client.start(self.token)
         
-    # (Rest of Bot class methods remain unchanged - on_ready, on_message, etc.)
-    # ... (keeping the rest of the file as-is)
+        # (Rest of Bot class methods remain unchanged - on_ready, on_message, etc.)
+    async def run(self):
+            print(f"Starting bot instance ({self.token_type}) in directory: {self.data_dir}")
+            self.config.load_config()
+            
+            if self.token_type == "bot":
+                self.oauth_handler = OAuthHandler(
+                    db_type=self.config.oauth_db_type,
+                    db_url=self.config.oauth_db_url,
+                    db_user=self.config.oauth_db_user,
+                    db_password=self.config.oauth_db_password,
+                    client_id=self.config.oauth_client_id,
+                    client_secret=self.config.oauth_client_secret,
+                )
+            
+            self.alts_handler = AltsHandler(self.data_dir, self.config.default_clean_spigey)
+            self.alts_handler.load_and_preprocess_alts_data()
+            self.load_notes()
+
+            await self.client.start(self.token)
+
+    def load_notes(self):
+        if self.notes_file.exists():
+            try:
+                with open(self.notes_file, "r", encoding="utf-8") as f: 
+                    self.notes_data = json.load(f)
+            except Exception as e:
+                print(f"[{self.data_dir.name}] Error loading notes: {e}")
+                self.notes_data = {"public": {}, "private": {}}
+        else: 
+            self.notes_data = {"public": {}, "private": {}}
+
+    def save_notes(self):
+        try:
+            with open(self.notes_file, "w", encoding="utf-8") as f: 
+                json.dump(self.notes_data, f, indent=2, ensure_ascii=False)
+        except Exception as e: 
+            print(f"[{self.data_dir.name}] Error saving notes: {e}")
+
+    def load_user_tokens(self) -> Dict:
+        if not self.user_tokens_file.exists(): 
+            return {}
+        try:
+            with open(self.user_tokens_file, "r", encoding="utf-8") as f: 
+                return json.load(f)
+        except (json.JSONDecodeError, IOError): 
+            return {}
+
+    def save_user_tokens(self, tokens: Dict):
+        try:
+            with open(self.user_tokens_file, "w", encoding="utf-8") as f: 
+                json.dump(tokens, f, indent=4)
+        except IOError as e: 
+            print(f"[Token Storage] Error saving user tokens: {e}")
+
+    def censor_text(self, text: str, guild_id: Optional[int] = None) -> str:
+        if not text or not isinstance(text, str): 
+            return text or ""
+        allow_swears = self.config.get_guild_config(guild_id, "allow-swears", self.config.default_allow_swears)
+        allow_slurs = self.config.get_guild_config(guild_id, "allow-slurs", self.config.default_allow_slurs)
+        if not allow_slurs:
+            for slur in SLUR_WORDS: 
+                text = re.compile(re.escape(slur), re.IGNORECASE).sub("█" * len(slur), text)
+        if not allow_swears:
+            for swear in SWEAR_WORDS: 
+                text = re.compile(re.escape(swear), re.IGNORECASE).sub("*" * len(swear), text)
+        return text
+
+    async def bot_send(self, channel, content=None, files=None):
+        censored_content = self.censor_text(content, channel.guild.id if hasattr(channel, "guild") and channel.guild else None) if content else ""
+        try:
+            if not censored_content and not files: 
+                return None
+            if not censored_content: 
+                return await channel.send(files=files, suppress_embeds=True)
+            sent_message = None
+            for i, chunk in enumerate(split_message(censored_content)):
+                msg_files = files if i == 0 else None
+                sent = await channel.send(content=chunk, files=msg_files, suppress_embeds=True)
+                if i == 0: 
+                    sent_message = sent
+            return sent_message
+        except Exception as e:
+            if "Forbidden" in type(e).__name__: 
+                print(f"[{self.client.user}] Missing permissions in channel {channel.id}")
+            else: 
+                print(f"[{self.client.user}] Error sending message: {e}")
+        return None
+
+    async def cleanup_forward_cache(self):
+        await self.client.wait_until_ready()
+        while not self.client.is_closed():
+            await asyncio.sleep(3600)
+            cutoff = datetime.now() - timedelta(hours=24)
+            expired = [k for k, v in self.forward_cache.items() if v["timestamp"] < cutoff]
+            for k in expired: 
+                del self.forward_cache[k]
+            if expired: 
+                print(f"[{self.client.user}] Cleaned {len(expired)} old forward cache entries.")
+
+    async def cleanup_message_cache(self):
+        await self.client.wait_until_ready()
+        while not self.client.is_closed():
+            await asyncio.sleep(600)
+            now = datetime.now()
+            cutoff = now - timedelta(minutes=10)
+            msg_expired = [k for k, v in self.message_cache.items() if v["timestamp"] < cutoff]
+            for k in msg_expired: 
+                del self.message_cache[k]
+            if msg_expired: 
+                print(f"[{self.client.user}] Cleaned {len(msg_expired)} old message cache entries.")
+            
+            edit_expired = [k for k, v in self.edit_history.items() if now - datetime.fromisoformat(v.get("timestamp", now.isoformat())) > timedelta(minutes=10)]
+            for k in edit_expired: 
+                del self.edit_history[k]
+            if edit_expired: 
+                print(f"[{self.client.user}] Cleaned {len(edit_expired)} old edit history entries.")
+
+    async def auto_refresh_alts(self):
+        await self.client.wait_until_ready()
+        await asyncio.sleep(60)
+        while not self.client.is_closed():
+            if self.config.alts_refresh_url:
+                print(f"[{self.client.user}] Auto-refreshing alts database...")
+                try:
+                    success = await self.alts_handler.refresh_alts_data(self.config.alts_refresh_url, self.ip_handler)
+                    if not success: 
+                        print(f"[{self.client.user}] Alts refresh failed.")
+                except Exception as e:
+                    print(f"[{self.client.user}] Error during auto-refresh: {e}")
+            await asyncio.sleep(60)
+
+    async def handle_command(self, message, command_name: str, args: list):
+        if not await self.check_authorization(message.author.id):
+            if self.oauth_handler:
+                await self.bot_send(message.channel, self.oauth_handler.get_authorization_message(message.author.mention))
+            return
+        
+        try:
+            if command_name in self.user_commands:
+                await self.user_commands[command_name](message, args)
+            elif command_name in self.admin_commands and str(message.author.id) in self.config.admin_ids:
+                await self.admin_commands[command_name](message, args)
+        except Exception as e:
+            print(f"[{self.client.user}] Error in command '{command_name}': {e}")
+            import traceback
+            traceback.print_exc()
+
+    async def handle_asteroide_response(self, message):
+        try:
+            if re.search(r"\S+ has \d+ alts:", message.content):
+                if parsed := self.alts_handler.parse_alts_response(message.content): 
+                    self.alts_handler.store_alts_data(parsed)
+        except Exception as e: 
+            print(f"[{self.client.user}] Error handling Asteroide response: {e}")
+
+    async def on_ready(self):
+        print(f"Logged in as {self.client.user} (ID: {self.client.user.id}) [Type: {self.token_type}]")
+        # ... rest of on_ready as shown
 
     async def on_ready(self):
         print(f"Logged in as {self.client.user} (ID: {self.client.user.id}) [Type: {self.token_type}]")
