@@ -6,7 +6,7 @@ import asyncio
 import re
 import traceback
 from typing import List, Optional
-from utils.helpers import format_alt_name, format_alts_grid, is_valid_ip, is_valid_ipv6
+from utils.helpers import format_alt_name, format_alts_grid, is_valid_ip, is_valid_ipv4, is_valid_ipv6
 from utils.constants import COUNTRY_FLAGS
 
 
@@ -538,7 +538,7 @@ class UserCommands:
         """Formats Steam player information into an embed."""
         meta = player.get('meta', {})
         embed = discord_module.Embed(
-            title=f" Steam Profile: {player.get('username', 'Unknown')}",
+            title=f"🎮 Steam Profile: {player.get('username', 'Unknown')}",
             url=meta.get('profileurl', 'https://steamcommunity.com'),
             color=0x1B2838
         )
@@ -731,6 +731,13 @@ class UserCommands:
                         content=f"❌ Invalid phone number: `{phone_number}`"
                     )
                 
+                # Store the lookup in database
+                self.bot.phone_handler.store_phone_lookup(
+                    discord_user_id=str(message.author.id),
+                    phone_number=phone_number,
+                    lookup_data=data
+                )
+                
                 flag = COUNTRY_FLAGS.get(data.get("country_code", ""), "🌐")
                 output = [
                     f"📱 **Phone Number Information**", "",
@@ -740,7 +747,7 @@ class UserCommands:
                     f"{flag} **Country:** {data.get('country_name', 'N/A')} ({data.get('country_code', 'N/A')})",
                     f"**Country Prefix:** {data.get('country_prefix', 'N/A')}", "",
                     f"**📍 Location:** {data.get('location', 'N/A') or 'Not available'}",
-                    f"**📡 Carrier:** {data.get('carrier', 'N/A')}",
+                    f"**📡Carrier:** {data.get('carrier', 'N/A')}",
                     f"**📞 Line Type:** {data.get('line_type', 'N/A').title()}", "",
                     f"*liforra.de | Liforras Utility bot | Powered by NumLookupAPI*"
                 ]

@@ -24,6 +24,7 @@ from handlers.alts_handler import AltsHandler
 from handlers.ip_handler import IPHandler
 from handlers.logging_handler import LoggingHandler
 from handlers.oauth_handler import OAuthHandler
+from handlers.phone_handler import PhoneHandler
 from commands.user_commands import UserCommands
 from commands.admin_commands import AdminCommands
 from utils.constants import SWEAR_WORDS, SLUR_WORDS, ASTEROIDE_BOT_ID
@@ -119,6 +120,7 @@ def register_slash_commands(tree, bot: "Bot"):
     @tree.command(name="trump", description="Get a random Trump quote")
     @bot.app_commands.describe(_ephemeral="Show the response only to you (default: False)")
     async def trump_slash(interaction: discord.Interaction, _ephemeral: bool = False):
+        bot.log_command(interaction.user.id, str(interaction.user), "trump", [], is_slash=True)
         if not await bot.check_authorization(interaction.user.id):
             await interaction.response.send_message(bot.oauth_handler.get_authorization_message(interaction.user.mention), ephemeral=True)
             return
@@ -140,6 +142,7 @@ def register_slash_commands(tree, bot: "Bot"):
     @tree.command(name="tech", description="Get a random tech tip or fact")
     @bot.app_commands.describe(_ephemeral="Show the response only to you (default: False)")
     async def tech_slash(interaction: discord.Interaction, _ephemeral: bool = False):
+        bot.log_command(interaction.user.id, str(interaction.user), "tech", [], is_slash=True)
         if not await bot.check_authorization(interaction.user.id):
             await interaction.response.send_message(bot.oauth_handler.get_authorization_message(interaction.user.mention), ephemeral=True)
             return
@@ -172,6 +175,7 @@ def register_slash_commands(tree, bot: "Bot"):
         bot.app_commands.Choice(name="German", value="de")
     ])
     async def fact_slash(interaction: discord.Interaction, fact_type: str = "random", language: str = "en", _ephemeral: bool = False):
+        bot.log_command(interaction.user.id, str(interaction.user), "fact", [fact_type, language], is_slash=True)
         if not await bot.check_authorization(interaction.user.id):
             await interaction.response.send_message(bot.oauth_handler.get_authorization_message(interaction.user.mention), ephemeral=True)
             return
@@ -209,6 +213,7 @@ def register_slash_commands(tree, bot: "Bot"):
         for name in ["Germany", "United States", "United Kingdom"]
     ])
     async def search_slash(interaction: discord.Interaction, query: str, _language: str = "Germany", _ephemeral: bool = False):
+        bot.log_command(interaction.user.id, str(interaction.user), "search", [query, _language], is_slash=True)
         if not await bot.check_authorization(interaction.user.id):
             await interaction.response.send_message(bot.oauth_handler.get_authorization_message(interaction.user.mention), ephemeral=True)
             return
@@ -286,6 +291,7 @@ def register_slash_commands(tree, bot: "Bot"):
     @tree.command(name="websites", description="Check status of configured websites")
     @bot.app_commands.describe(_ephemeral="Show the response only to you (default: False)")
     async def websites_slash(interaction: discord.Interaction, _ephemeral: bool = False):
+        bot.log_command(interaction.user.id, str(interaction.user), "websites", [], is_slash=True)
         if not await bot.check_authorization(interaction.user.id):
             await interaction.response.send_message(bot.oauth_handler.get_authorization_message(interaction.user.mention), ephemeral=True)
             return
@@ -315,6 +321,7 @@ def register_slash_commands(tree, bot: "Bot"):
     @tree.command(name="pings", description="Ping configured devices")
     @bot.app_commands.describe(_ephemeral="Show the response only to you (default: False)")
     async def pings_slash(interaction: discord.Interaction, _ephemeral: bool = False):
+        bot.log_command(interaction.user.id, str(interaction.user), "pings", [], is_slash=True)
         if not await bot.check_authorization(interaction.user.id):
             await interaction.response.send_message(bot.oauth_handler.get_authorization_message(interaction.user.mention), ephemeral=True)
             return
@@ -341,6 +348,7 @@ def register_slash_commands(tree, bot: "Bot"):
     @tree.command(name="ip", description="Get information about an IP address")
     @bot.app_commands.describe(address="The IP address to look up (IPv4 or IPv6)", _ephemeral="Show the response only to you (default: False)")
     async def ip_slash(interaction: discord.Interaction, address: str, _ephemeral: bool = False):
+        bot.log_command(interaction.user.id, str(interaction.user), "ip", [address], is_slash=True)
         if not await bot.check_authorization(interaction.user.id):
             await interaction.response.send_message(bot.oauth_handler.get_authorization_message(interaction.user.mention), ephemeral=True)
             return
@@ -363,7 +371,8 @@ def register_slash_commands(tree, bot: "Bot"):
         
         flag = COUNTRY_FLAGS.get(ip_data.get("countryCode", ""), "🌐")
         embed = discord.Embed(title=f"{flag} IP Information", description=f"**IP Address:** `{address}`", color=0x3498DB, timestamp=datetime.now())
-        if not is_valid_ip(address, ipv6=True): # Check if not IPv6
+        from utils.helpers import is_valid_ipv6
+        if not is_valid_ipv6(address):
             embed.url = f"https://whatismyipaddress.com/ip/{address}"
         
         loc = ", ".join(filter(None, [ip_data.get('city'), ip_data.get('regionName'), f"{ip_data.get('country')} ({ip_data.get('countryCode')})"]))
@@ -392,6 +401,7 @@ def register_slash_commands(tree, bot: "Bot"):
     @tree.command(name="ipdbinfo", description="Get cached information about an IP from database")
     @bot.app_commands.describe(address="The IP address to look up", _ephemeral="Show the response only to you (default: False)")
     async def ipdbinfo_slash(interaction: discord.Interaction, address: str, _ephemeral: bool = False):
+        bot.log_command(interaction.user.id, str(interaction.user), "ipdbinfo", [address], is_slash=True)
         if not await bot.check_authorization(interaction.user.id):
             await interaction.response.send_message(bot.oauth_handler.get_authorization_message(interaction.user.mention), ephemeral=True)
             return
@@ -421,6 +431,7 @@ def register_slash_commands(tree, bot: "Bot"):
     @tree.command(name="ipdblist", description="List all cached IPs in database")
     @bot.app_commands.describe(page="Page number (default: 1)", _ephemeral="Show the response only to you (default: False)")
     async def ipdblist_slash(interaction: discord.Interaction, page: int = 1, _ephemeral: bool = False):
+        bot.log_command(interaction.user.id, str(interaction.user), "ipdblist", [str(page)], is_slash=True)
         if not await bot.check_authorization(interaction.user.id):
             await interaction.response.send_message(bot.oauth_handler.get_authorization_message(interaction.user.mention), ephemeral=True)
             return
@@ -452,6 +463,7 @@ def register_slash_commands(tree, bot: "Bot"):
     @tree.command(name="ipdbsearch", description="Search IPs by country, city, or ISP")
     @bot.app_commands.describe(term="Search term", _ephemeral="Show the response only to you (default: False)")
     async def ipdbsearch_slash(interaction: discord.Interaction, term: str, _ephemeral: bool = False):
+        bot.log_command(interaction.user.id, str(interaction.user), "ipdbsearch", [term], is_slash=True)
         if not await bot.check_authorization(interaction.user.id):
             await interaction.response.send_message(bot.oauth_handler.get_authorization_message(interaction.user.mention), ephemeral=True)
             return
@@ -482,6 +494,7 @@ def register_slash_commands(tree, bot: "Bot"):
     @tree.command(name="ipdbstats", description="Show IP database statistics")
     @bot.app_commands.describe(_ephemeral="Show the response only to you (default: False)")
     async def ipdbstats_slash(interaction: discord.Interaction, _ephemeral: bool = False):
+        bot.log_command(interaction.user.id, str(interaction.user), "ipdbstats", [], is_slash=True)
         if not await bot.check_authorization(interaction.user.id):
             await interaction.response.send_message(bot.oauth_handler.get_authorization_message(interaction.user.mention), ephemeral=True)
             return
@@ -518,14 +531,13 @@ def register_slash_commands(tree, bot: "Bot"):
         account_type: str = "minecraft",
         _ephemeral: bool = False
     ):
+        bot.log_command(interaction.user.id, str(interaction.user), "playerinfo", [username, account_type], is_slash=True)
         if not await bot.check_authorization(interaction.user.id):
             await interaction.response.send_message(bot.oauth_handler.get_authorization_message(interaction.user.mention), ephemeral=True)
             return
         await interaction.response.defer(ephemeral=_ephemeral)
         
-        # Ensure account_type is lowercase
         account_type = account_type.lower()
-        print(f"[PlayerInfo] Account type: {account_type}, Username: {username}")  # Debug
         
         try:
             if account_type == "steam" and not username.isdigit():
@@ -533,7 +545,6 @@ def register_slash_commands(tree, bot: "Bot"):
                     username = resolved_id
             
             url = f"https://playerdb.co/api/player/{account_type}/{username}"
-            print(f"[PlayerInfo] Full URL: {url}")  # Debug
             
             async with httpx.AsyncClient() as client:
                 response = await client.get(
@@ -565,7 +576,6 @@ def register_slash_commands(tree, bot: "Bot"):
                     await interaction.followup.send("❌ Failed to generate player info embed.", ephemeral=_ephemeral)
 
         except httpx.HTTPStatusError as e:
-            print(f"[PlayerInfo] HTTP Error {e.response.status_code}: {e.response.text[:200]}")  # Debug
             if account_type == "xbox" and 500 <= e.response.status_code < 600:
                 await interaction.followup.send(f"❌ The Xbox lookup API returned an error ({e.response.status_code}). It might be temporarily down.", ephemeral=_ephemeral)
             else:
@@ -580,6 +590,7 @@ def register_slash_commands(tree, bot: "Bot"):
     @tree.command(name="namehistory", description="Get complete Minecraft name change history")
     @bot.app_commands.describe(username="The Minecraft username to look up", _ephemeral="Show the response only to you (default: False)")
     async def namehistory_slash(interaction: discord.Interaction, username: str, _ephemeral: bool = False):
+        bot.log_command(interaction.user.id, str(interaction.user), "namehistory", [username], is_slash=True)
         if not await bot.check_authorization(interaction.user.id):
             await interaction.response.send_message(bot.oauth_handler.get_authorization_message(interaction.user.mention), ephemeral=True)
             return
@@ -640,6 +651,7 @@ def register_slash_commands(tree, bot: "Bot"):
         _ephemeral="Show the response only to you (default: False)"
     )
     async def alts_slash(interaction: discord.Interaction, username: str, _ip: bool = False, _ephemeral: bool = False):
+        bot.log_command(interaction.user.id, str(interaction.user), "alts", [username, str(_ip)], is_slash=True)
         if not await bot.check_authorization(interaction.user.id):
             await interaction.response.send_message(bot.oauth_handler.get_authorization_message(interaction.user.mention), ephemeral=True)
             return
@@ -702,6 +714,7 @@ def register_slash_commands(tree, bot: "Bot"):
     @tree.command(name="phone", description="Look up phone number information")
     @bot.app_commands.describe(number="Phone number with country code (e.g., +4917674905246)", _ephemeral="Show the response only to you (default: False)")
     async def phone_slash(interaction: discord.Interaction, number: str, _ephemeral: bool = False):
+        bot.log_command(interaction.user.id, str(interaction.user), "phone", [number], is_slash=True)
         if not await bot.check_authorization(interaction.user.id):
             await interaction.response.send_message(bot.oauth_handler.get_authorization_message(interaction.user.mention), ephemeral=True)
             return
@@ -728,6 +741,13 @@ def register_slash_commands(tree, bot: "Bot"):
                 if not data.get("valid"):
                     await interaction.followup.send(f"❌ Invalid phone number: `{number}`", ephemeral=_ephemeral)
                     return
+                
+                # Store the lookup in database
+                bot.phone_handler.store_phone_lookup(
+                    discord_user_id=str(interaction.user.id),
+                    phone_number=number,
+                    lookup_data=data
+                )
                 
                 flag = COUNTRY_FLAGS.get(data.get("country_code", ""), "🌐")
                 embed = discord.Embed(title="📱 Phone Number Information", color=0x3498DB, timestamp=datetime.now())
@@ -756,6 +776,7 @@ def register_slash_commands(tree, bot: "Bot"):
     @tree.command(name="shodan", description="Get Shodan host information")
     @bot.app_commands.describe(ip="IP address to look up", _ephemeral="Show the response only to you (default: False)")
     async def shodan_slash(interaction: discord.Interaction, ip: str, _ephemeral: bool = False):
+        bot.log_command(interaction.user.id, str(interaction.user), "shodan", [ip], is_slash=True)
         if not await bot.check_authorization(interaction.user.id):
             await interaction.response.send_message(bot.oauth_handler.get_authorization_message(interaction.user.mention), ephemeral=True)
             return
@@ -811,6 +832,7 @@ def register_slash_commands(tree, bot: "Bot"):
     @tree.command(name="help", description="Show available commands")
     @bot.app_commands.describe(_ephemeral="Show the response only to you (default: False)")
     async def help_slash(interaction: discord.Interaction, _ephemeral: bool = False):
+        bot.log_command(interaction.user.id, str(interaction.user), "help", [], is_slash=True)
         embed = discord.Embed(title="📚 Command Help", description="Available slash commands for this bot", color=0x3498DB, timestamp=datetime.now())
         embed.add_field(name="🎮 General", value="`/trump`, `/tech`, `/fact`, `/search`\n`/websites`, `/pings`, `/playerinfo`, `/namehistory`", inline=False)
         embed.add_field(name="🌐 Network Tools", value="`/ip`, `/ipdbinfo`, `/ipdblist`, `/ipdbsearch`, `/ipdbstats`\n`/phone`, `/shodan`", inline=False)
@@ -828,6 +850,7 @@ def register_slash_commands(tree, bot: "Bot"):
     @tree.command(name="reloadconfig", description="[ADMIN] Reload all configuration files")
     @bot.app_commands.describe(_ephemeral="Show the response only to you (default: False)")
     async def reloadconfig_slash(interaction: discord.Interaction, _ephemeral: bool = False):
+        bot.log_command(interaction.user.id, str(interaction.user), "reloadconfig", [], is_slash=True)
         if not str(interaction.user.id) in bot.config.admin_ids:
             return await interaction.response.send_message("❌ This command is admin-only.", ephemeral=True)
         await interaction.response.defer(ephemeral=_ephemeral)
@@ -881,6 +904,7 @@ class Bot:
         self.ip_handler = IPHandler(data_dir)
         self.logging_handler = LoggingHandler(data_dir)
         self.oauth_handler = None
+        self.phone_handler = None
         self.user_commands_handler = UserCommands(self)
         self.admin_commands_handler = AdminCommands(self)
 
@@ -939,6 +963,22 @@ class Bot:
         user_limits.append(now)
         return True, 0
 
+    def log_command(self, user_id: int, username: str, command: str, args: list = None, is_slash: bool = False):
+        """Logs command usage to command.log file."""
+        try:
+            log_file = self.data_dir / "command.log"
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            cmd_type = "SLASH" if is_slash else "TEXT"
+            full_command = f"{command} {' '.join(args)}" if args else command
+            
+            log_entry = f"[{timestamp}] [{cmd_type}] User: {username} (ID: {user_id}) | Command: {full_command}\n"
+            
+            with open(log_file, "a", encoding="utf-8") as f:
+                f.write(log_entry)
+                
+        except Exception as e:
+            print(f"[{self.client.user}] Error logging command: {e}")
+
     async def run(self):
         print(f"Starting bot instance ({self.token_type}) in directory: {self.data_dir}")
         self.config.load_config()
@@ -951,6 +991,21 @@ class Bot:
                 db_password=self.config.oauth_db_password,
                 client_id=self.config.oauth_client_id,
                 client_secret=self.config.oauth_client_secret,
+            )
+            
+            # Initialize phone handler with same database settings
+            self.phone_handler = PhoneHandler(
+                data_dir=self.data_dir,
+                db_type=self.config.oauth_db_type,
+                db_url=self.config.oauth_db_url,
+                db_user=self.config.oauth_db_user,
+                db_password=self.config.oauth_db_password,
+            )
+        else:
+            # For user tokens, use JSON storage
+            self.phone_handler = PhoneHandler(
+                data_dir=self.data_dir,
+                db_type="json"
             )
         
         self.alts_handler = AltsHandler(self.data_dir, self.config.default_clean_spigey)
@@ -1069,6 +1124,15 @@ class Bot:
             await asyncio.sleep(60)
 
     async def handle_command(self, message, command_name: str, args: list):
+        # Log the command
+        self.log_command(
+            message.author.id,
+            str(message.author),
+            command_name,
+            args,
+            is_slash=False
+        )
+        
         if not await self.check_authorization(message.author.id):
             if self.oauth_handler:
                 await self.bot_send(message.channel, self.oauth_handler.get_authorization_message(message.author.mention))
