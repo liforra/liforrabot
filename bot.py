@@ -105,11 +105,11 @@ class PaginationView:
 # START OF SLASH COMMAND REGISTRATION
 # =================================================================================
 
-# Move LANGUAGE_MAP outside to avoid decorator evaluation issues
+# Language configurations for search
 LANGUAGE_MAP = {
-    "Germany": {"hl": "de", "gl": "de", "google_domain": "google.de", "location": "Hamburg, Germany"},
-    "United States": {"hl": "en", "gl": "us", "google_domain": "google.com", "location": "Austin, Texas, United States"},
-    "United Kingdom": {"hl": "en", "gl": "uk", "google_domain": "google.co.uk", "location": "London, England, United Kingdom"},
+    "Germany": {"location": "Hamburg, Germany", "hl": "de", "gl": "de", "google_domain": "google.de"},
+    "United States": {"location": "Austin, Texas, United States", "hl": "en", "gl": "us", "google_domain": "google.com"},
+    "United Kingdom": {"location": "London, England, United Kingdom", "hl": "en", "gl": "uk", "google_domain": "google.co.uk"},
 }
 
 def register_slash_commands(tree, bot: "Bot"):
@@ -224,8 +224,18 @@ def register_slash_commands(tree, bot: "Bot"):
             return
         
         try:
-            search_region = LANGUAGE_MAP.get(_language, LANGUAGE_MAP["Germany"])
-            params = {**search_region, "q": query, "api_key": bot.config.serpapi_key}
+            # Get region settings
+            region_settings = LANGUAGE_MAP.get(_language, LANGUAGE_MAP["Germany"])
+            
+            # Build parameters for SerpAPI
+            params = {
+                "q": query,
+                "location": region_settings["location"],
+                "hl": region_settings["hl"],
+                "gl": region_settings["gl"],
+                "google_domain": region_settings["google_domain"],
+                "api_key": bot.config.serpapi_key
+            }
             
             async with httpx.AsyncClient() as client:
                 response = await client.get("https://serpapi.com/search.json", params=params, timeout=20)
@@ -253,10 +263,13 @@ def register_slash_commands(tree, bot: "Bot"):
             
             summary_embed.add_field(name="📍 Region", value=_language, inline=True)
 
-            if (answer_box := data.get("answer_box", {})) and (answer := answer_box.get("answer") or answer_box.get("snippet")):
+            # Answer box or quick answer
+            if (answer_box := data.get("answer_box")) and (answer := answer_box.get("answer")):
                 summary_embed.add_field(name="💡 Quick Answer", value=answer[:1000] + ("..." if len(answer) > 1000 else ""), inline=False)
-            elif (kg := data.get("knowledge_graph", {})) and (kg_title := kg.get("title")):
-                kg_text = f"**{kg_title}**" + (f" _{kg.get('entity_type')}_" if kg.get('entity_type') else "")
+            elif (kg := data.get("knowledge_graph")) and (kg_title := kg.get("title")):
+                kg_text = f"**{kg_title}**"
+                if kg_type := kg.get("type"):
+                    kg_text += f" _{kg_type}_"
                 if kg_desc := kg.get("description"):
                     kg_text += f"\n{kg_desc[:200] + ('...' if len(kg_desc) > 200 else '')}"
                 summary_embed.add_field(name="📚 Knowledge Graph", value=kg_text, inline=False)
@@ -287,7 +300,7 @@ def register_slash_commands(tree, bot: "Bot"):
                         page_embed.add_field(name=f"📄 {title}", value=value_text, inline=False)
                     embeds.append(page_embed)
 
-            if not any(embed.fields for embed in embeds):
+            if not any(embed.fields or embed.description for embed in embeds):
                 await interaction.followup.send("❌ No results found.", ephemeral=_ephemeral)
                 return
 
@@ -298,8 +311,10 @@ def register_slash_commands(tree, bot: "Bot"):
             await interaction.followup.send(embed=embeds[0], view=view, ephemeral=_ephemeral)
 
         except httpx.HTTPStatusError as e:
-            if e.response.status_code == 401: await interaction.followup.send("❌ Invalid SerpAPI key.", ephemeral=_ephemeral)
-            else: await interaction.followup.send(f"❌ API Error: {e.response.status_code}", ephemeral=_ephemeral)
+            if e.response.status_code == 401: 
+                await interaction.followup.send("❌ Invalid SerpAPI key.", ephemeral=_ephemeral)
+            else: 
+                await interaction.followup.send(f"❌ API Error: {e.response.status_code}", ephemeral=_ephemeral)
         except Exception as e:
             await interaction.followup.send(f"❌ An unexpected error occurred: {type(e).__name__}", ephemeral=_ephemeral)
 
@@ -325,7 +340,8 @@ def register_slash_commands(tree, bot: "Bot"):
                 responses = await asyncio.gather(*[client.head(s, timeout=10) for s in friend_sites], return_exceptions=True)
                 embed.add_field(name="Friends' Websites", value="\n".join([f"🟢 `{s}` ({r.status_code})" if isinstance(r, httpx.Response) and 200 <= r.status_code < 400 else f"🔴 `{s}` ({type(r).__name__ if isinstance(r, Exception) else r.status_code})" for s, r in zip(friend_sites, responses)]), inline=False)
         
-        if not embed.fields: embed.description = "No websites configured."
+        if not embed.fields: 
+            embed.description = "No websites configured."
         embed.set_footer(text="liforra.de | Liforras Utility bot")
         await interaction.followup.send(embed=embed, ephemeral=_ephemeral)
 
@@ -382,16 +398,22 @@ def register_slash_commands(tree, bot: "Bot"):
             embed.url = f"https://whatismyipaddress.com/ip/{address}"
         
         loc = ", ".join(filter(None, [ip_data.get('city'), ip_data.get('regionName'), f"{ip_data.get('country')} ({ip_data.get('countryCode')})"]))
-        if loc: embed.add_field(name="📍 Location", value=loc, inline=False)
+        if loc: 
+            embed.add_field(name="📍 Location", value=loc, inline=False)
         
         net = "\n".join(filter(None, [f"**ISP:** {ip_data.get('isp')}" if ip_data.get('isp') else None, f"**AS:** {ip_data.get('as')}" if ip_data.get('as') else None]))
-        if net: embed.add_field(name="🌐 Network", value=net, inline=False)
+        if net: 
+            embed.add_field(name="🌐 Network", value=net, inline=False)
         
         sec_flags = []
-        if vpn := bot.ip_handler.detect_vpn_provider(ip_data.get("isp", ""), ip_data.get("org", "")): sec_flags.append(f"🔒 **VPN Provider:** {vpn}")
-        elif ip_data.get("proxy"): sec_flags.append("🔒 **Proxy/VPN Detected**")
-        if ip_data.get("hosting"): sec_flags.append("☁️ **Hosting Service**")
-        if sec_flags: embed.add_field(name="🛡️ Security", value="\n".join(sec_flags), inline=False)
+        if vpn := bot.ip_handler.detect_vpn_provider(ip_data.get("isp", ""), ip_data.get("org", "")): 
+            sec_flags.append(f"🔒 **VPN Provider:** {vpn}")
+        elif ip_data.get("proxy"): 
+            sec_flags.append("🔒 **Proxy/VPN Detected**")
+        if ip_data.get("hosting"): 
+            sec_flags.append("☁️ **Hosting Service**")
+        if sec_flags: 
+            embed.add_field(name="🛡️ Security", value="\n".join(sec_flags), inline=False)
         
         embed.set_footer(text="liforra.de | Liforras Utility bot | Powered by ip-api.com")
         await interaction.followup.send(embed=embed, ephemeral=_ephemeral)
@@ -415,10 +437,12 @@ def register_slash_commands(tree, bot: "Bot"):
         embed.add_field(name="Last Updated", value=f"<t:{ts}:R>")
 
         loc = ", ".join(filter(None, [geo.get('city'), geo.get('regionName'), f"{geo.get('country')} ({geo.get('countryCode')})"]))
-        if loc: embed.add_field(name="📍 Location", value=loc, inline=False)
+        if loc: 
+            embed.add_field(name="📍 Location", value=loc, inline=False)
 
         net = "\n".join(filter(None, [f"**ISP:** {geo.get('isp')}" if geo.get('isp') else None, f"**Org:** {geo.get('org')}" if geo.get('org') else None]))
-        if net: embed.add_field(name="🌐 Network", value=net, inline=False)
+        if net: 
+            embed.add_field(name="🌐 Network", value=net, inline=False)
         
         embed.set_footer(text="liforra.de | Liforras Utility bot")
         await interaction.response.send_message(embed=embed, ephemeral=_ephemeral)
@@ -448,7 +472,8 @@ def register_slash_commands(tree, bot: "Bot"):
         
         view = PaginationView(embeds, bot.discord) if len(embeds) > 1 else None
         page_to_show = page - 1 if 0 <= page - 1 < len(embeds) else 0
-        if view: view.current_page = page_to_show
+        if view: 
+            view.current_page = page_to_show
         await interaction.followup.send(embed=embeds[page_to_show], view=view, ephemeral=_ephemeral)
 
     @tree.command(name="ipdbsearch", description="Search IPs by country, city, or ISP")
@@ -526,7 +551,8 @@ def register_slash_commands(tree, bot: "Bot"):
             
             if history := player.get('name_history'):
                 h_text = " → ".join([f"`{discord.utils.escape_markdown(n)}`" for n in history[:8]])
-                if len(history) > 8: h_text += f"\n*... and {len(history) - 8} more*"
+                if len(history) > 8: 
+                    h_text += f"\n*... and {len(history) - 8} more*"
                 embed.add_field(name="📜 Name History", value=h_text, inline=False)
 
             embed.set_image(url=f"https://crafatar.com/renders/body/{player['raw_id']}?overlay=true&size=512")
@@ -563,7 +589,8 @@ def register_slash_commands(tree, bot: "Bot"):
             
             safe_username = discord.utils.escape_markdown(username)
             embed = discord.Embed(title=f"📜 Name History for {safe_username}", url=f"https://namemc.com/profile/{username}", color=0x9B59B6)
-            if uuid := data.get("uuid"): embed.add_field(name="🆔 UUID", value=f"`{uuid}`", inline=False)
+            if uuid := data.get("uuid"): 
+                embed.add_field(name="🆔 UUID", value=f"`{uuid}`", inline=False)
             
             # Add last seen with Discord timestamp
             if last_seen_str := data.get("last_seen_at"):
@@ -810,27 +837,6 @@ class Bot:
         self.load_notes()
 
         await self.client.start(self.token)
-        
-        # (Rest of Bot class methods remain unchanged - on_ready, on_message, etc.)
-    async def run(self):
-            print(f"Starting bot instance ({self.token_type}) in directory: {self.data_dir}")
-            self.config.load_config()
-            
-            if self.token_type == "bot":
-                self.oauth_handler = OAuthHandler(
-                    db_type=self.config.oauth_db_type,
-                    db_url=self.config.oauth_db_url,
-                    db_user=self.config.oauth_db_user,
-                    db_password=self.config.oauth_db_password,
-                    client_id=self.config.oauth_client_id,
-                    client_secret=self.config.oauth_client_secret,
-                )
-            
-            self.alts_handler = AltsHandler(self.data_dir, self.config.default_clean_spigey)
-            self.alts_handler.load_and_preprocess_alts_data()
-            self.load_notes()
-
-            await self.client.start(self.token)
 
     def load_notes(self):
         if self.notes_file.exists():
@@ -969,10 +975,6 @@ class Bot:
 
     async def on_ready(self):
         print(f"Logged in as {self.client.user} (ID: {self.client.user.id}) [Type: {self.token_type}]")
-        # ... rest of on_ready as shown
-
-    async def on_ready(self):
-        print(f"Logged in as {self.client.user} (ID: {self.client.user.id}) [Type: {self.token_type}]")
         if self.token_type == "bot" and self.tree:
             try:
                 print(f"[{self.client.user}] Syncing slash commands...")
@@ -997,10 +999,12 @@ class Bot:
         self.client.loop.create_task(self.auto_refresh_alts())
         print(f"[{self.client.user}] Started background tasks (cache cleanup, alts auto-refresh)")
 
-    async def on_presence_update(self, before, after): pass
+    async def on_presence_update(self, before, after): 
+        pass
 
     async def on_message(self, message):
-        if message.author.id == self.client.user.id: return
+        if message.author.id == self.client.user.id: 
+            return
         if message.author.bot:
             if str(message.author.id) == ASTEROIDE_BOT_ID and self.config.get_guild_config(message.guild.id if message.guild else None, "detect-ips", self.config.default_detect_ips):
                 await self.handle_asteroide_response(message)
@@ -1013,7 +1017,8 @@ class Bot:
                 self.logging_handler.log_guild_attachments(message, self.config.get_attachment_log_setting(message.guild.id, message.author.id, message.channel.id)),
                 return_exceptions=True
             )
-        else: await self.logging_handler.log_dm(message)
+        else: 
+            await self.logging_handler.log_dm(message)
 
         await self._handle_sync_message(message)
 
@@ -1021,132 +1026,28 @@ class Bot:
             return
         
         gid = message.guild.id if message.guild else None
-        if not self.config.get_guild_config(gid, "allow-commands", self.config.default_allow_commands, message.author.id, message.channel.id): return
+        if not self.config.get_guild_config(gid, "allow-commands", self.config.default_allow_commands, message.author.id, message.channel.id): 
+            return
 
         prefix = self.config.get_prefix(gid)
-        if not message.content.startswith(prefix): return
-        
-        parts = message.content[len(prefix):].split()
-        if not parts: return
-        await self.handle_command(message, parts[0].lower(), parts[1:])
-
-    def load_notes(self):
-        if self.notes_file.exists():
-            try:
-                with open(self.notes_file, "r", encoding="utf-8") as f: self.notes_data = json.load(f)
-            except Exception as e:
-                print(f"[{self.data_dir.name}] Error loading notes: {e}")
-                self.notes_data = {"public": {}, "private": {}}
-        else: self.notes_data = {"public": {}, "private": {}}
-
-    def save_notes(self):
-        try:
-            with open(self.notes_file, "w", encoding="utf-8") as f: json.dump(self.notes_data, f, indent=2, ensure_ascii=False)
-        except Exception as e: print(f"[{self.data_dir.name}] Error saving notes: {e}")
-
-    def load_user_tokens(self) -> Dict:
-        if not self.user_tokens_file.exists(): return {}
-        try:
-            with open(self.user_tokens_file, "r", encoding="utf-8") as f: return json.load(f)
-        except (json.JSONDecodeError, IOError): return {}
-
-    def save_user_tokens(self, tokens: Dict):
-        try:
-            with open(self.user_tokens_file, "w", encoding="utf-8") as f: json.dump(tokens, f, indent=4)
-        except IOError as e: print(f"[Token Storage] Error saving user tokens: {e}")
-
-    def censor_text(self, text: str, guild_id: Optional[int] = None) -> str:
-        if not text or not isinstance(text, str): return text or ""
-        allow_swears = self.config.get_guild_config(guild_id, "allow-swears", self.config.default_allow_swears)
-        allow_slurs = self.config.get_guild_config(guild_id, "allow-slurs", self.config.default_allow_slurs)
-        if not allow_slurs:
-            for slur in SLUR_WORDS: text = re.compile(re.escape(slur), re.IGNORECASE).sub("█" * len(slur), text)
-        if not allow_swears:
-            for swear in SWEAR_WORDS: text = re.compile(re.escape(swear), re.IGNORECASE).sub("*" * len(swear), text)
-        return text
-
-    async def bot_send(self, channel, content=None, files=None):
-        censored_content = self.censor_text(content, channel.guild.id if hasattr(channel, "guild") and channel.guild else None) if content else ""
-        try:
-            if not censored_content and not files: return None
-            if not censored_content: return await channel.send(files=files, suppress_embeds=True)
-            sent_message = None
-            for i, chunk in enumerate(split_message(censored_content)):
-                msg_files = files if i == 0 else None
-                sent = await channel.send(content=chunk, files=msg_files, suppress_embeds=True)
-                if i == 0: sent_message = sent
-            return sent_message
-        except Exception as e:
-            if "Forbidden" in type(e).__name__: print(f"[{self.client.user}] Missing permissions in channel {channel.id}")
-            else: print(f"[{self.client.user}] Error sending message: {e}")
-        return None
-
-    async def cleanup_forward_cache(self):
-        await self.client.wait_until_ready()
-        while not self.client.is_closed():
-            await asyncio.sleep(3600)
-            cutoff = datetime.now() - timedelta(hours=24)
-            expired = [k for k, v in self.forward_cache.items() if v["timestamp"] < cutoff]
-            for k in expired: del self.forward_cache[k]
-            if expired: print(f"[{self.client.user}] Cleaned {len(expired)} old forward cache entries.")
-
-    async def cleanup_message_cache(self):
-        await self.client.wait_until_ready()
-        while not self.client.is_closed():
-            await asyncio.sleep(600)
-            now = datetime.now()
-            cutoff = now - timedelta(minutes=10)
-            msg_expired = [k for k, v in self.message_cache.items() if v["timestamp"] < cutoff]
-            for k in msg_expired: del self.message_cache[k]
-            if msg_expired: print(f"[{self.client.user}] Cleaned {len(msg_expired)} old message cache entries.")
-            
-            edit_expired = [k for k, v in self.edit_history.items() if now - datetime.fromisoformat(v.get("timestamp", now.isoformat())) > timedelta(minutes=10)]
-            for k in edit_expired: del self.edit_history[k]
-            if edit_expired: print(f"[{self.client.user}] Cleaned {len(edit_expired)} old edit history entries.")
-
-    async def auto_refresh_alts(self):
-        await self.client.wait_until_ready()
-        await asyncio.sleep(60)
-        while not self.client.is_closed():
-            if self.config.alts_refresh_url:
-                print(f"[{self.client.user}] Auto-refreshing alts database...")
-                try:
-                    success = await self.alts_handler.refresh_alts_data(self.config.alts_refresh_url, self.ip_handler)
-                    if not success: print(f"[{self.client.user}] Alts refresh failed.")
-                except Exception as e:
-                    print(f"[{self.client.user}] Error during auto-refresh: {e}")
-            await asyncio.sleep(60)
-
-    async def handle_command(self, message, command_name: str, args: list):
-        if not await self.check_authorization(message.author.id):
-            if self.oauth_handler:
-                await self.bot_send(message.channel, self.oauth_handler.get_authorization_message(message.author.mention))
+        if not message.content.startswith(prefix): 
             return
         
-        try:
-            if command_name in self.user_commands:
-                await self.user_commands[command_name](message, args)
-            elif command_name in self.admin_commands and str(message.author.id) in self.config.admin_ids:
-                await self.admin_commands[command_name](message, args)
-        except Exception as e:
-            print(f"[{self.client.user}] Error in command '{command_name}': {e}")
-            import traceback; traceback.print_exc()
-
-    async def handle_asteroide_response(self, message):
-        try:
-            if re.search(r"\S+ has \d+ alts:", message.content):
-                if parsed := self.alts_handler.parse_alts_response(message.content): 
-                    self.alts_handler.store_alts_data(parsed)
-        except Exception as e: 
-            print(f"[{self.client.user}] Error handling Asteroide response: {e}")
+        parts = message.content[len(prefix):].split()
+        if not parts: 
+            return
+        await self.handle_command(message, parts[0].lower(), parts[1:])
 
     async def on_message_edit(self, before, after):
-        if after.author.id == self.client.user.id or not after.guild or after.author.bot: return
-        if not self.config.get_guild_config(after.guild.id, "prevent-editing", self.config.default_prevent_editing, after.author.id, after.channel.id): return
+        if after.author.id == self.client.user.id or not after.guild or after.author.bot: 
+            return
+        if not self.config.get_guild_config(after.guild.id, "prevent-editing", self.config.default_prevent_editing, after.author.id, after.channel.id): 
+            return
 
         original = self.message_cache.get(after.id, {}).get("content", before.content)
         new = after.content or ""
-        if original == new: return
+        if original == new: 
+            return
 
         if after.id not in self.edit_history:
             self.edit_history[after.id] = {"bot_msg": None, "all_edits": [], "original": original, "timestamp": datetime.now().isoformat()}
@@ -1160,10 +1061,12 @@ class Bot:
             edit_lines = [f"**Original:** {original or '*empty*'}"] + [f"**Edited {i+1}:** {e or '*empty*'}" for i, e in enumerate(history['all_edits'][:-1])] + [f"**Now:** {new or '*empty*'}" ]
             edit_info = f"**Edited by <@{after.author.id}>**\n" + "\n".join(edit_lines[0:1] + edit_lines[-1:] if len(edit_lines) <= 2 else edit_lines)
 
-            if history["bot_msg"]: await history["bot_msg"].edit(content=edit_info)
+            if history["bot_msg"]: 
+                await history["bot_msg"].edit(content=edit_info)
             else:
                 bot_msg = await self.bot_send(after.channel, content=edit_info)
-                if bot_msg: history["bot_msg"] = bot_msg
+                if bot_msg: 
+                    history["bot_msg"] = bot_msg
         except Exception as e:
             print(f"[{self.client.user}] Error in on_message_edit: {e}")
 
@@ -1176,7 +1079,8 @@ class Bot:
         content_display = f"`{(original or '[Empty Message]').replace('`', '`')}`"
         
         attachments = "\n".join([f"<{att.url}>" for att in message.attachments]) if message.attachments else ""
-        if not original and not attachments: return
+        if not original and not attachments: 
+            return
 
         try:
             if message.author.id == self.client.user.id:
@@ -1186,21 +1090,28 @@ class Bot:
         except Exception as e:
             print(f"[{self.client.user}] Error in on_message_delete: {e}")
         finally:
-            if message.id in self.message_cache: del self.message_cache[message.id]
-            if message.id in self.edit_history: del self.edit_history[message.id]
+            if message.id in self.message_cache: 
+                del self.message_cache[message.id]
+            if message.id in self.edit_history: 
+                del self.edit_history[message.id]
 
     async def _handle_sync_message(self, message):
-        if not self.config.sync_channel_id or (message.guild and str(message.channel.id) == self.config.sync_channel_id): return
+        if not self.config.sync_channel_id or (message.guild and str(message.channel.id) == self.config.sync_channel_id): 
+            return
         
         is_dm = not message.guild
         is_ping = message.guild and self.client.user in message.mentions
         is_reply = message.reference and message.reference.resolved and message.reference.resolved.author == self.client.user
         is_keyword = bool(re.search(r"liforra", message.content, re.IGNORECASE))
-        if not (is_dm or is_ping or is_reply or is_keyword): return
+        if not (is_dm or is_ping or is_reply or is_keyword): 
+            return
 
-        try: target_channel = self.client.get_channel(int(self.config.sync_channel_id))
-        except (ValueError, TypeError): return print(f"[{self.client.user}] SYNC ERROR: Invalid sync-channel ID.")
-        if not target_channel: return print(f"[{self.client.user}] SYNC ERROR: Could not find sync channel.")
+        try: 
+            target_channel = self.client.get_channel(int(self.config.sync_channel_id))
+        except (ValueError, TypeError): 
+            return print(f"[{self.client.user}] SYNC ERROR: Invalid sync-channel ID.")
+        if not target_channel: 
+            return print(f"[{self.client.user}] SYNC ERROR: Could not find sync channel.")
 
         author_name = f"{message.author.name}#{message.author.discriminator}" if message.author.discriminator != '0' else message.author.name
         header = f"**From `{author_name}`** in `{'DMs' if is_dm else f'{message.guild.name} / #{message.channel.name}'}`"
@@ -1217,7 +1128,8 @@ class Bot:
                         r = await http_client.get(att.url, timeout=60)
                         r.raise_for_status()
                         files.append(self.discord.File(io.BytesIO(r.content), filename=att.filename))
-                    except Exception as e: print(f"[{self.client.user}] SYNC: Failed to download attachment: {e}")
+                    except Exception as e: 
+                        print(f"[{self.client.user}] SYNC: Failed to download attachment: {e}")
         
         sent_message = await self.bot_send(target_channel, content=f"{header}\n{message.content}\n{mention}", files=files)
         if sent_message:
