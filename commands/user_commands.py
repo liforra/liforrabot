@@ -549,6 +549,8 @@ class UserCommands:
             )
         
         try:
+            output = [] # FIX: Initialize output to prevent UnboundLocalError
+            
             # For Steam, try to resolve vanity URL to Steam ID64 first
             if account_type == "steam" and not username.isdigit():
                 if resolved_id := await self._resolve_steam_vanity_url(username):
@@ -584,13 +586,20 @@ class UserCommands:
                 elif account_type == "xbox":
                     output = self._format_xbox_info(player)
                 
-                await self.bot.bot_send(message.channel, content="\n".join(output))
+                if output:
+                    await self.bot.bot_send(message.channel, content="\n".join(output))
                 
         except httpx.HTTPStatusError as e:
-            await self.bot.bot_send(
-                message.channel,
-                content=f"❌ API Error: {e.response.status_code}"
-            )
+            if account_type == "xbox" and 500 <= e.response.status_code < 600:
+                await self.bot.bot_send(
+                    message.channel,
+                    content=f"❌ The Xbox lookup API returned an error ({e.response.status_code}). It might be temporarily down."
+                )
+            else:
+                await self.bot.bot_send(
+                    message.channel,
+                    content=f"❌ API Error: {e.response.status_code}"
+                )
         except Exception as e:
             await self.bot.bot_send(
                 message.channel,
@@ -652,6 +661,7 @@ class UserCommands:
 
     def _format_steam_info(self, player: dict) -> list:
         """Formats Steam player information."""
+        meta = player.get('meta', {})
         output = [
             f"🎮 **Steam Player Info: {player.get('username', 'Unknown')}**",
             f"",
@@ -659,40 +669,40 @@ class UserCommands:
         
         # Steam ID (in various formats)
         if player.get('id'):
-            output.append(f"**🆔 Steam ID:** `{player['id']}`")
-        if player.get('steamid'):
-            output.append(f"**🔢 Steam ID64:** `{player['steamid']}`")
-        if player.get('steam_id'):
-            output.append(f"**📝 Steam ID (legacy):** `{player['steam_id']}`")
-        if player.get('steam3_id'):
-            output.append(f"**📝 Steam3 ID:** `{player['steam3_id']}`")
+            output.append(f"**🆔 Steam ID:** `{player.get('id')}`")
+        if meta.get('steamid'):
+            output.append(f"**🔢 Steam ID64:** `{meta.get('steamid')}`")
+        if meta.get('steam2id_new'):
+            output.append(f"**📝 Steam2 ID:** `{meta.get('steam2id_new')}`")
+        if meta.get('steam3id'):
+            output.append(f"**📝 Steam3 ID:** `{meta.get('steam3id')}`")
         
         output.append(f"")
         
         # Profile info
         if player.get('avatar'):
-            output.append(f"**🖼️ Avatar:** {player['avatar']}")
+            output.append(f"**🖼️ Avatar:** {player.get('avatar')}")
         
-        if player.get('profile_url'):
-            output.append(f"**🔗 Profile URL:** {player['profile_url']}")
+        if meta.get('profileurl'):
+            output.append(f"**🔗 Profile URL:** {meta.get('profileurl')}")
         
         # Account status
-        if 'profile_visibility' in player:
-            visibility = player['profile_visibility']
+        if meta.get('communityvisibilitystate'):
+            visibility = meta.get('communityvisibilitystate')
             visibility_map = {3: "Public", 2: "Friends Only", 1: "Private"}
             output.append(f"**👁️ Profile:** {visibility_map.get(visibility, 'Unknown')}")
         
-        if player.get('time_created'):
+        if meta.get('timecreated'):
             from datetime import datetime
-            created_time = datetime.fromtimestamp(player['time_created']).strftime('%Y-%m-%d')
+            created_time = datetime.fromtimestamp(meta.get('timecreated')).strftime('%Y-%m-%d')
             output.append(f"**📅 Account Created:** {created_time}")
         
         # Additional info
-        if player.get('country_code'):
-            output.append(f"**🌍 Country:** {player['country_code']}")
+        if meta.get('loccountrycode'):
+            output.append(f"**🌍 Country:** {meta.get('loccountrycode')}")
         
-        if player.get('real_name'):
-            output.append(f"**👤 Real Name:** {player['real_name']}")
+        if meta.get('realname'):
+            output.append(f"**👤 Real Name:** {meta.get('realname')}")
         
         cached_at = player.get('meta', {}).get('cached_at')
         if cached_at:

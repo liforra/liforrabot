@@ -582,6 +582,8 @@ def register_slash_commands(tree, bot: "Bot"):
                     return
                 
                 player = data["data"]["player"]
+                meta = player.get('meta', {})
+                embed = None # FIX: Initialize embed to prevent UnboundLocalError
                 
                 # Create embed based on account type
                 if account_type == "minecraft":
@@ -611,32 +613,32 @@ def register_slash_commands(tree, bot: "Bot"):
                 elif account_type == "steam":
                     embed = discord.Embed(
                         title=f"🎮 {player.get('username', 'Unknown')}", 
-                        url=player.get('profile_url', 'https://steamcommunity.com'),
+                        url=meta.get('profileurl', 'https://steamcommunity.com'),
                         color=0x1B2838
                     )
                     if player.get('avatar'):
                         embed.set_thumbnail(url=player['avatar'])
                     
-                    if player.get('steamid'):
-                        embed.add_field(name="🔢 Steam ID64", value=f"`{player['steamid']}`", inline=True)
-                    if player.get('steam3_id'):
-                        embed.add_field(name="📝 Steam3 ID", value=f"`{player['steam3_id']}`", inline=True)
+                    if meta.get('steamid'):
+                        embed.add_field(name="🔢 Steam ID64", value=f"`{meta.get('steamid')}`", inline=True)
+                    if meta.get('steam3id'):
+                        embed.add_field(name="📝 Steam3 ID", value=f"`{meta.get('steam3id')}`", inline=True)
                     
-                    if 'profile_visibility' in player:
+                    if meta.get('communityvisibilitystate'):
                         visibility_map = {3: "Public", 2: "Friends Only", 1: "Private"}
                         embed.add_field(
                             name="👁️ Profile", 
-                            value=visibility_map.get(player['profile_visibility'], "Unknown"),
+                            value=visibility_map.get(meta.get('communityvisibilitystate'), "Unknown"),
                             inline=True
                         )
                     
-                    if player.get('time_created'):
+                    if meta.get('timecreated'):
                         from datetime import datetime
-                        created_time = datetime.fromtimestamp(player['time_created']).strftime('%Y-%m-%d')
+                        created_time = datetime.fromtimestamp(meta.get('timecreated')).strftime('%Y-%m-%d')
                         embed.add_field(name="📅 Account Created", value=created_time, inline=True)
                     
-                    if player.get('country_code'):
-                        embed.add_field(name="🌍 Country", value=player['country_code'], inline=True)
+                    if meta.get('loccountrycode'):
+                        embed.add_field(name="🌍 Country", value=meta.get('loccountrycode'), inline=True)
                     
                 elif account_type == "xbox":
                     embed = discord.Embed(
@@ -660,16 +662,20 @@ def register_slash_commands(tree, bot: "Bot"):
                             bio = bio[:97] + "..."
                         embed.add_field(name="📝 Bio", value=bio, inline=False)
                 
-                if cached_at := player.get('meta', {}).get('cached_at'):
-                    embed.set_footer(text="Powered by PlayerDB • Data cached")
-                    embed.timestamp = datetime.fromtimestamp(cached_at)
-                else:
-                    embed.set_footer(text="liforra.de | Liforras Utility bot | Powered by PlayerDB")
-                
-                await interaction.followup.send(embed=embed, ephemeral=_ephemeral)
+                if embed:
+                    if cached_at := meta.get('cached_at'):
+                        embed.set_footer(text="Powered by PlayerDB • Data cached")
+                        embed.timestamp = datetime.fromtimestamp(cached_at)
+                    else:
+                        embed.set_footer(text="liforra.de | Liforras Utility bot | Powered by PlayerDB")
+                    
+                    await interaction.followup.send(embed=embed, ephemeral=_ephemeral)
                 
         except httpx.HTTPStatusError as e:
-            await interaction.followup.send(f"❌ API Error: {e.response.status_code}", ephemeral=_ephemeral)
+            if account_type == "xbox" and 500 <= e.response.status_code < 600:
+                await interaction.followup.send(f"❌ The Xbox lookup API returned an error ({e.response.status_code}). It might be temporarily down.", ephemeral=_ephemeral)
+            else:
+                await interaction.followup.send(f"❌ API Error: {e.response.status_code}", ephemeral=_ephemeral)
         except Exception as e:
             await interaction.followup.send(f"❌ Error: {type(e).__name__}", ephemeral=_ephemeral)
 
