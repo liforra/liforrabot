@@ -32,6 +32,7 @@ from utils.helpers import (
     calculate_edit_percentage,
     is_likely_typo,
 )
+from utils.steam_location_handler import SteamLocationHandler
 
 
 class PaginationView:
@@ -348,7 +349,7 @@ def register_slash_commands(tree, bot: "Bot"):
         
         flag = COUNTRY_FLAGS.get(ip_data.get("countryCode", ""), "🌐")
         embed = discord.Embed(title=f"{flag} IP Information", description=f"**IP Address:** `{address}`", color=0x3498DB, timestamp=datetime.now())
-        if not is_valid_ipv6(address):
+        if not is_valid_ip(address, ipv6=True): # Check if not IPv6
             embed.url = f"https://whatismyipaddress.com/ip/{address}"
         
         loc = ", ".join(filter(None, [ip_data.get('city'), ip_data.get('regionName'), f"{ip_data.get('country')} ({ip_data.get('countryCode')})"]))
@@ -498,6 +499,7 @@ def register_slash_commands(tree, bot: "Bot"):
             return
         await interaction.response.defer(ephemeral=_ephemeral)
         
+        embed = None # Initialize embed to prevent UnboundLocalError
         try:
             if account_type == "steam" and not username.isdigit():
                 if resolved_id := await bot.user_commands_handler._resolve_steam_vanity_url(username):
@@ -519,7 +521,6 @@ def register_slash_commands(tree, bot: "Bot"):
                     )
                 
                 player = data["data"]["player"]
-                embed = None
                 
                 if account_type == "minecraft":
                     embed = bot.user_commands_handler._format_minecraft_info(player, bot.discord)
@@ -530,7 +531,7 @@ def register_slash_commands(tree, bot: "Bot"):
 
                 if embed:
                     await interaction.followup.send(embed=embed, ephemeral=_ephemeral)
-                else: # Fallback in case embed creation fails
+                else: 
                     await interaction.followup.send("❌ Failed to generate player info embed.", ephemeral=_ephemeral)
 
         except httpx.HTTPStatusError as e:
@@ -832,6 +833,7 @@ class Bot:
             self.discord = selfcord
 
         self.config = ConfigManager(data_dir)
+        self.steam_location_handler = SteamLocationHandler()
         self.alts_handler = None
         self.ip_handler = IPHandler(data_dir)
         self.logging_handler = LoggingHandler(data_dir)
@@ -958,7 +960,6 @@ class Bot:
         try:
             if not censored_content and not files and not embed: return None
             
-            # Simplified sending logic
             kwargs = {"suppress_embeds": True}
             if censored_content:
                 kwargs["content"] = censored_content
@@ -966,15 +967,14 @@ class Bot:
                 kwargs["files"] = files
             if embed and self.token_type == "bot":
                 kwargs["embed"] = embed
-                kwargs.pop("suppress_embeds", None) # Don't suppress our own embed
+                kwargs.pop("suppress_embeds", None)
             
             sent_message = None
-            # Chunking is only for text content
             if censored_content:
                 for i, chunk in enumerate(split_message(censored_content)):
                     current_kwargs = kwargs.copy()
                     current_kwargs['content'] = chunk
-                    if i > 0: # Only send files/embed with the first chunk
+                    if i > 0: 
                         current_kwargs.pop('files', None)
                         current_kwargs.pop('embed', None)
 
