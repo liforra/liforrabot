@@ -306,11 +306,25 @@ def register_slash_commands(tree, bot: "Bot"):
         await fact_slash(interaction, fact_type, language, _ephemeral=True)
 
     # Search command using SerpAPI - with pagination and better embeds
+    LANGUAGE_MAP = {
+        "Germany": {"hl": "de", "gl": "de", "google_domain": "google.de", "location": "Hamburg, Germany"},
+        "United States": {"hl": "en", "gl": "us", "google_domain": "google.com", "location": "Austin, Texas, United States"},
+        "United Kingdom": {"hl": "en", "gl": "uk", "google_domain": "google.co.uk", "location": "London, England, United Kingdom"},
+    }
+    
     @tree.command(name="search", description="Search Google using SerpAPI")
-    @bot.app_commands.describe(query="Search query")
+    @bot.app_commands.describe(
+        query="Search query",
+        _language="Search region"
+    )
+    @bot.app_commands.choices(_language=[
+        bot.app_commands.Choice(name="Germany", value="Germany"),
+        bot.app_commands.Choice(name="United States", value="United States"),
+        bot.app_commands.Choice(name="United Kingdom", value="United Kingdom")
+    ])
     @bot.app_commands.allowed_installs(guilds=True, users=True)
     @bot.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
-    async def search_slash(interaction: bot.discord.Interaction, query: str, _ephemeral: bool = False):
+    async def search_slash(interaction: bot.discord.Interaction, query: str, _language: str = "Germany", _ephemeral: bool = False):
         if not bot.check_authorization(interaction.user.id):
             await interaction.response.send_message(
                 bot.oauth_handler.get_authorization_message(interaction.user.mention),
@@ -318,11 +332,10 @@ def register_slash_commands(tree, bot: "Bot"):
             )
             return
         
-        # Rate limiting: 5 searches per minute
         is_allowed, wait_time = bot.check_rate_limit(interaction.user.id, "search", limit=5, window=60)
         if not is_allowed:
             await interaction.response.send_message(
-                f"⏱️ Rate limit exceeded. Please wait {wait_time} seconds before searching again.",
+                f"⏱️ Rate limit exceeded. Please wait {wait_time} seconds.",
                 ephemeral=True
             )
             return
@@ -330,31 +343,22 @@ def register_slash_commands(tree, bot: "Bot"):
         await interaction.response.defer(ephemeral=_ephemeral)
         
         if not bot.config.serpapi_key:
-            await interaction.followup.send(
-                "❌ SerpAPI key not configured. Please contact an administrator.",
-                ephemeral=_ephemeral
-            )
+            await interaction.followup.send("❌ SerpAPI key not configured.", ephemeral=_ephemeral)
             return
         
         try:
-            params = {
-                "q": query,
-                "location": "Hamburg, Germany",
-                "hl": "de",
-                "gl": "de",
-                "google_domain": "google.de",
-                "api_key": bot.config.serpapi_key
-            }
+            search_region = LANGUAGE_MAP.get(_language, LANGUAGE_MAP["Germany"])
+            params = {**search_region, "q": query, "api_key": bot.config.serpapi_key}
             
             async with httpx.AsyncClient() as client:
-                response = await client.get(
-                    "https://serpapi.com/search.json",
-                    params=params,
-                    timeout=15,
-                )
+                response = await client.get("https://serpapi.com/search.json", params=params, timeout=15)
                 response.raise_for_status()
                 data = response.json()
-            
+
+            if data.get("error"):
+                await interaction.followup.send(f"❌ API Error: {data['error']}", ephemeral=_ephemeral)
+                return
+
             embeds = []
             
             # --- Build Page 1 (Summary) ---
@@ -363,113 +367,80 @@ def register_slash_commands(tree, bot: "Bot"):
                 description=f"**Query:** `{query}`",
                 color=0x4285F4,
                 timestamp=datetime.now(),
-                url=data.get("search_metadata", {}).get("google_url", None)
+                url=data.get("search_metadata", {}).get("google_url")
             )
-            summary_embed.set_thumbnail(url="https://cdn-icons-png.flaticon.com/512/751/751463.png")
+            summary_embed.set_thumbnail(url="https://i.imgur.com/tEChjwx.png")
 
-            search_info = data.get("search_information", {})
-            search_params = data.get("search_parameters", {})
+            if (info := data.get("search_information")) and (total_results := info.get("total_results")):
+                summary_embed.add_field(name="📊 Stats", value=f"{total_results:,} results\n({info.get('time_taken_displayed', 'N/A')}s)", inline=True)
             
-            if (total_results := search_info.get("total_results")) or (time_taken := search_info.get("time_taken_displayed")):
-                summary_embed.add_field(
-                    name="📊 Stats",
-                    value=f"{total_results:,} results\n({time_taken or 'N/A'} seconds)",
-                    inline=True
-                )
-            
-            if location := search_params.get("location_used"):
-                summary_embed.add_field(
-                    name="📍 Location",
-                    value=location,
-                    inline=True
-                )
+            summary_embed.add_field(name="📍 Region", value=_language, inline=True)
 
             if answer_box := data.get("answer_box", {}):
-                answer = answer_box.get("answer", answer_box.get("snippet", ""))
-                if answer:
-                    summary_embed.add_field(
-                        name="💡 Quick Answer",
-                        value=answer[:1000] + ("..." if len(answer) > 1000 else ""),
-                        inline=False
-                    )
+                if answer := answer_box.get("answer") or answer_box.get("snippet"):
+                    summary_embed.add_field(name="💡 Quick Answer", value=answer[:1000] + "..." if len(answer) > 1000 else answer, inline=False)
 
             if kg := data.get("knowledge_graph", {}):
                 if kg_title := kg.get("title"):
-                    kg_text = f"**{kg_title}**"
-                    if kg_type := kg.get("entity_type"):
-                        kg_text += f" _{kg_type}_"
+                    kg_text = f"**{kg_title}**" + (f" _{kg.get('entity_type')}_" if kg.get('entity_type') else "")
                     if kg_desc := kg.get("description"):
                         kg_text += f"\n{kg_desc[:200] + ('...' if len(kg_desc) > 200 else '')}"
                     summary_embed.add_field(name="📚 Knowledge Graph", value=kg_text, inline=False)
-
-            organic_results = data.get("organic_results", [])
             
+            organic_results = data.get("organic_results", [])
             if organic_results:
-                top_results_text = []
-                for result in organic_results[:2]:
-                    title = result.get('title', 'No Title')
-                    link = result.get('link', '#')
-                    snippet = result.get('snippet', 'No snippet available.')
-                    top_results_text.append(f"**[{title}]({link})**\n📝 _{snippet[:150] + ('...' if len(snippet) > 150 else '')}_")
-                
-                summary_embed.add_field(name="🏆 Top Results", value="\n\n".join(top_results_text), inline=False)
+                top_hit = organic_results[0]
+                summary_embed.add_field(name="🏆 Top Result", value=f"**[{top_hit.get('title')}]({top_hit.get('link')})**\n_{top_hit.get('snippet', 'No snippet.')[:150]...}_", inline=False)
             
             embeds.append(summary_embed)
 
             # --- Build Subsequent Pages (Organic Results) ---
-            results_per_page = 4
-            remaining_results = organic_results[2:]
-            
-            if remaining_results:
-                num_pages = (len(remaining_results) + results_per_page - 1) // results_per_page
-                for i in range(num_pages):
-                    chunk = remaining_results[i * results_per_page : (i + 1) * results_per_page]
-                    page_embed = bot.discord.Embed(
-                        title=f"🔍 Search Results (Page {i+2})",
-                        description=f"**Query:** `{query}`",
-                        color=0x4285F4
-                    )
+            if organic_results:
+                results_per_page = 3
+                for i in range(0, len(organic_results), results_per_page):
+                    chunk = organic_results[i : i + results_per_page]
+                    page_num = (i // results_per_page) + 1
+                    page_embed = bot.discord.Embed(title=f"Organic Results (Page {page_num})", color=0x34A853)
                     
-                    results_text = []
                     for result in chunk:
-                        title = result.get('title', 'No Title')
-                        link = result.get('link', '#')
-                        snippet = result.get('snippet', 'No snippet available.')
-                        results_text.append(f"**[{title}]({link})**\n📝 _{snippet[:200] + ('...' if len(snippet) > 200 else '')}_")
-                    
-                    page_embed.description += "\n\n" + "\n\n".join(results_text)
+                        page_embed.add_field(
+                            name=f"📄 {result.get('title', 'No Title')}",
+                            value=f"_{result.get('snippet', 'No snippet available.')[:200]...}_\n**[Read More]({result.get('link', '#')})**",
+                            inline=False
+                        )
                     embeds.append(page_embed)
-
-            # --- Send the response ---
-            if not embeds:
+            
+            if not embeds or (len(embeds) == 1 and not summary_embed.fields):
                 await interaction.followup.send("❌ No results found.", ephemeral=_ephemeral)
                 return
 
             for i, embed in enumerate(embeds):
                 embed.set_footer(text=f"liforra.de | Liforras Utility bot | Powered by SerpAPI | Page {i+1}/{len(embeds)}")
             
-            if len(embeds) == 1:
-                await interaction.followup.send(embed=embeds[0], ephemeral=_ephemeral)
-            else:
-                pagination = PaginationView(embeds, bot.discord)
-                await interaction.followup.send(embed=embeds[0], view=pagination.view, ephemeral=_ephemeral)
+            view = PaginationView(embeds, bot.discord) if len(embeds) > 1 else None
+            await interaction.followup.send(embed=embeds[0], view=view, ephemeral=_ephemeral)
 
         except httpx.HTTPStatusError as e:
-            if e.response.status_code == 401:
-                await interaction.followup.send("❌ Invalid SerpAPI key configuration.", ephemeral=_ephemeral)
-            elif e.response.status_code == 429:
-                await interaction.followup.send("❌ SerpAPI rate limit exceeded. Please try again later.", ephemeral=_ephemeral)
-            else:
-                await interaction.followup.send(f"❌ SerpAPI Error: {e.response.status_code}", ephemeral=_ephemeral)
+            if e.response.status_code == 401: await interaction.followup.send("❌ Invalid SerpAPI key.", ephemeral=_ephemeral)
+            else: await interaction.followup.send(f"❌ API Error: {e.response.status_code}", ephemeral=_ephemeral)
         except Exception as e:
-            await interaction.followup.send(f"❌ Error: {type(e).__name__}", ephemeral=_ephemeral)
+            await interaction.followup.send(f"❌ An unexpected error occurred: {type(e).__name__}", ephemeral=_ephemeral)
+
 
     @tree.command(name="psearch", description="[Private] Search Google using SerpAPI")
-    @bot.app_commands.describe(query="Search query")
+    @bot.app_commands.describe(
+        query="Search query",
+        _language="Search region"
+    )
+    @bot.app_commands.choices(_language=[
+        bot.app_commands.Choice(name="Germany", value="Germany"),
+        bot.app_commands.Choice(name="United States", value="United States"),
+        bot.app_commands.Choice(name="United Kingdom", value="United Kingdom")
+    ])
     @bot.app_commands.allowed_installs(guilds=True, users=True)
     @bot.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
-    async def psearch_slash(interaction: bot.discord.Interaction, query: str):
-        await search_slash(interaction, query, _ephemeral=True)
+    async def psearch_slash(interaction: bot.discord.Interaction, query: str, _language: str = "Germany"):
+        await search_slash(interaction, query, _language, _ephemeral=True)
 
     # Websites command with embed
     @tree.command(name="websites", description="Check status of configured websites")
