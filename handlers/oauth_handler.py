@@ -1,6 +1,7 @@
-"""OAuth2 authentication handler with PostgreSQL support."""
+"""OAuth2 authentication handler with token validation."""
 
 import json
+import httpx
 from pathlib import Path
 from typing import Optional, Dict
 from datetime import datetime
@@ -13,11 +14,15 @@ class OAuthHandler:
         db_url: str = "file:///home/liforra/bot-users.json",
         db_user: Optional[str] = None,
         db_password: Optional[str] = None,
+        client_id: Optional[str] = None,
+        client_secret: Optional[str] = None,
     ):
         self.db_type = db_type
         self.db_url = db_url
         self.db_user = db_user
         self.db_password = db_password
+        self.client_id = client_id
+        self.client_secret = client_secret
         
         # PostgreSQL pool
         self.pg_pool = None
@@ -70,15 +75,44 @@ class OAuthHandler:
         else:
             self.oauth_file = Path(self.db_url)
 
-    def is_user_authorized(self, user_id: str) -> bool:
-        """Checks if a user has completed OAuth authorization."""
-        if self.db_type == "postgres" and self.pg_pool:
-            return self._is_user_authorized_postgres(user_id)
-        else:
-            return self._is_user_authorized_json(user_id)
+    async def verify_access_token(self, access_token: str) -> bool:
+        """Verifies if an access token is still valid by checking with Discord API."""
+        if not access_token:
+            return False
+        
+        try:
+            async with httpx.AsyncClient() as client:
+                # Try to get user info with the access token
+                response = await client.get(
+                    "https://discord.com/api/v10/users/@me",
+                    headers={"Authorization": f"Bearer {access_token}"},
+                    timeout=10
+                )
+                
+                # If we get a 200, the token is valid
+                if response.status_code == 200:
+                    return True
+                # 401 means unauthorized (invalid/expired token)
+                elif response.status_code == 401:
+                    print(f"[OAuth] Access token is invalid or expired")
+                    return False
+                else:
+                    print(f"[OAuth] Unexpected response when verifying token: {response.status_code}")
+                    return False
+                    
+        except Exception as e:
+            print(f"[OAuth] Error verifying access token: {e}")
+            return False
 
-    def _is_user_authorized_postgres(self, user_id: str) -> bool:
-        """Checks authorization in PostgreSQL."""
+    async def is_user_authorized(self, user_id: str) -> bool:
+        """Checks if a user has completed OAuth authorization and validates their token."""
+        if self.db_type == "postgres" and self.pg_pool:
+            return await self._is_user_authorized_postgres(user_id)
+        else:
+            return await self._is_user_authorized_json(user_id)
+
+    async def _is_user_authorized_postgres(self, user_id: str) -> bool:
+        """Checks authorization in PostgreSQL with token validation."""
         conn = None
         try:
             conn = self.pg_pool.getconn()
@@ -87,7 +121,7 @@ class OAuthHandler:
             # Check if user exists and has valid tokens
             cur.execute(
                 """
-                SELECT expires_at, refresh_token
+                SELECT access_token, expires_at, refresh_token
                 FROM bot_users
                 WHERE discord_user_id = %s
                 """,
@@ -98,7 +132,7 @@ class OAuthHandler:
             if not result:
                 return False
             
-            expires_at, refresh_token = result
+            access_token, expires_at, refresh_token = result
             
             # Check if we have a refresh token (means they've authorized)
             if not refresh_token:
@@ -109,14 +143,18 @@ class OAuthHandler:
                 try:
                     expiry_time = datetime.fromisoformat(str(expires_at))
                     if datetime.now() < expiry_time:
-                        return True
+                        # Token not expired yet, verify it's still valid with Discord
+                        is_valid = await self.verify_access_token(access_token)
+                        if not is_valid:
+                            print(f"[OAuth] Token for user {user_id} is no longer valid with Discord")
+                        return is_valid
                     else:
                         print(f"[OAuth] Token expired for user {user_id}")
                         return False
                 except:
                     pass
             
-            return True
+            return False
             
         except Exception as e:
             print(f"[OAuth] Error checking authorization in PostgreSQL: {e}")
@@ -125,8 +163,8 @@ class OAuthHandler:
             if conn:
                 self.pg_pool.putconn(conn)
 
-    def _is_user_authorized_json(self, user_id: str) -> bool:
-        """Checks authorization in JSON file."""
+    async def _is_user_authorized_json(self, user_id: str) -> bool:
+        """Checks authorization in JSON file with token validation."""
         if not self.oauth_file or not self.oauth_file.exists():
             return False
         
@@ -139,13 +177,20 @@ class OAuthHandler:
         
         for entry in oauth_data:
             if entry.get("userId") == str(user_id):
+                tokens = entry.get("tokens", {})
+                access_token = tokens.get("access_token")
+                
                 # Check if token is expired
-                expires_at = entry.get("tokens", {}).get("expires_at")
+                expires_at = tokens.get("expires_at")
                 if expires_at:
                     try:
                         expiry_time = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
                         if datetime.now(expiry_time.tzinfo) < expiry_time:
-                            return True
+                            # Token not expired yet, verify it's still valid with Discord
+                            is_valid = await self.verify_access_token(access_token)
+                            if not is_valid:
+                                print(f"[OAuth] Token for user {user_id} is no longer valid with Discord")
+                            return is_valid
                         else:
                             print(f"[OAuth] Token expired for user {user_id}")
                             return False

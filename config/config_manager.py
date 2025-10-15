@@ -40,11 +40,13 @@ class ConfigManager:
         self.sync_mention_id = ""
         self.serpapi_key = ""
         
-        # Database configuration for OAuth
+        # OAuth configuration
         self.oauth_db_type = "json"
         self.oauth_db_url = "file:///home/liforra/bot-users.json"
         self.oauth_db_user = None
         self.oauth_db_password = None
+        self.oauth_client_id = None
+        self.oauth_client_secret = None
 
     def load_config(self):
         """Loads configuration from file."""
@@ -67,6 +69,8 @@ class ConfigManager:
                     "general.oauth-db-url",
                     "general.oauth-db-user",
                     "general.oauth-db-password",
+                    "general.oauth-client-id",
+                    "general.oauth-client-secret",
                     "general.serpapi-key",
                 ],
             )
@@ -94,13 +98,15 @@ class ConfigManager:
             self.sync_mention_id = general.get("sync-mention-id", "")
             self.serpapi_key = general.get("serpapi-key", "")
             
-            # OAuth database configuration
+            # OAuth configuration
             self.oauth_db_type = general.get("oauth-db-type", "json")
             self.oauth_db_url = general.get(
                 "oauth-db-url", "file:///home/liforra/bot-users.json"
             )
             self.oauth_db_user = general.get("oauth-db-user")
             self.oauth_db_password = general.get("oauth-db-password")
+            self.oauth_client_id = general.get("oauth-client-id")
+            self.oauth_client_secret = general.get("oauth-client-secret")
 
             self.guild_configs = self.config_data.get("guild", {})
 
@@ -121,6 +127,8 @@ class ConfigManager:
                     "general.oauth-db-url",
                     "general.oauth-db-user",
                     "general.oauth-db-password",
+                    "general.oauth-client-id",
+                    "general.oauth-client-secret",
                     "general.serpapi-key",
                 ],
                 "discord-status": "online",
@@ -147,6 +155,8 @@ class ConfigManager:
                 "oauth-db-url": "file:///home/liforra/bot-users.json",
                 "oauth-db-user": "",
                 "oauth-db-password": "",
+                "oauth-client-id": "",
+                "oauth-client-secret": "",
             },
             "guild": {},
         }
