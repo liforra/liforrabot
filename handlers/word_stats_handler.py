@@ -74,9 +74,26 @@ class WordStatsHandler:
         words = self._token_pattern.findall(content.lower())
         if not words:
             return
-        counts = Counter(words)
+        counts = Counter(self._apply_spam_filter(words))
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, self._store_counts, self._normalize_guild_id(guild_id), int(user_id), counts)
+
+    def _apply_spam_filter(self, words: List[str]) -> List[str]:
+        filtered: List[str] = []
+        prev_word = None
+        run_length = 0
+        spam_threshold = 5
+
+        for word in words:
+            if word == prev_word:
+                run_length += 1
+            else:
+                prev_word = word
+                run_length = 1
+
+            if run_length <= spam_threshold:
+                filtered.append(word)
+        return filtered
 
     def _store_counts(self, guild_id: int, user_id: int, counts: Counter):
         if not self.pg_pool:
@@ -168,6 +185,58 @@ class WordStatsHandler:
         except Exception as e:
             print(f"[WordStats] Error executing fetch: {e}")
             return []
+        finally:
+            if conn:
+                self.pg_pool.putconn(conn)
+
+    async def delete_stats_by_word(self, word: str, guild_id: Optional[int] = None, user_id: Optional[int] = None) -> int:
+        if not self.available or not self.pg_pool:
+            return 0
+        base = "DELETE FROM word_usage WHERE word = %s"
+        params: List = [word.lower()]
+        if guild_id is not None:
+            base += " AND guild_id = %s"
+            params.append(self._normalize_guild_id(guild_id))
+        if user_id is not None:
+            base += " AND user_id = %s"
+            params.append(int(user_id))
+        return await self._execute_delete(base, tuple(params))
+
+    async def delete_stats_by_user(self, user_id: int, guild_id: Optional[int] = None) -> int:
+        if not self.available or not self.pg_pool:
+            return 0
+        base = "DELETE FROM word_usage WHERE user_id = %s"
+        params: List = [int(user_id)]
+        if guild_id is not None:
+            base += " AND guild_id = %s"
+            params.append(self._normalize_guild_id(guild_id))
+        return await self._execute_delete(base, tuple(params))
+
+    async def delete_stats_by_guild(self, guild_id: int) -> int:
+        if not self.available or not self.pg_pool:
+            return 0
+        base = "DELETE FROM word_usage WHERE guild_id = %s"
+        params = (self._normalize_guild_id(guild_id),)
+        return await self._execute_delete(base, params)
+
+    async def _execute_delete(self, query: str, params: tuple) -> int:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self._delete_sync, query, params)
+
+    def _delete_sync(self, query: str, params: tuple) -> int:
+        conn = None
+        try:
+            conn = self.pg_pool.getconn()
+            cur = conn.cursor()
+            cur.execute(query, params)
+            affected = cur.rowcount or 0
+            conn.commit()
+            return affected
+        except Exception as e:
+            if conn:
+                conn.rollback()
+            print(f"[WordStats] Error deleting stats: {e}")
+            return 0
         finally:
             if conn:
                 self.pg_pool.putconn(conn)

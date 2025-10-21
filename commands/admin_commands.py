@@ -7,7 +7,8 @@ import re
 import io
 import httpx
 import asyncio
-from typing import List
+from datetime import datetime, timedelta, timezone
+from typing import List, Optional
 from utils.helpers import (
     format_alt_name,
     format_alts_grid,
@@ -209,6 +210,158 @@ Match Status = {self.bot.config.match_status}
             await self.bot.bot_send(
                 message.channel, content="❌ An error occurred while resending."
             )
+
+    async def command_backfill(self, message: discord.Message, args: List[str]):
+        """Backfills word statistics for the current channel."""
+        handler = getattr(self.bot, "word_stats_handler", None)
+        if not handler or not handler.available:
+            return await self.bot.bot_send(
+                message.channel,
+                content="❌ Word statistics database is not configured.",
+            )
+
+        if not message.guild:
+            return await self.bot.bot_send(
+                message.channel, content="❌ Backfill can only be used in servers."
+            )
+
+        days: Optional[int] = 7
+        if args:
+            token = args[0].lower()
+            if token in {"all", "infinite", "full", "*"}:
+                days = None
+            elif token.isdigit():
+                days = int(token)
+            else:
+                return await self.bot.bot_send(
+                    message.channel,
+                    content="❌ Invalid days value. Use a positive number or `all`.",
+                )
+
+        if days is not None and days < 1:
+            days = 7
+
+        span_text = "all available history" if days is None else f"the last {days} day(s)"
+        await self.bot.bot_send(
+            message.channel, content=f"⚙️ Backfilling statistics for {span_text}..."
+        )
+
+        cutoff = None if days is None else datetime.now(timezone.utc) - timedelta(days=days)
+        processed = 0
+
+        try:
+            history_kwargs = {"limit": None, "oldest_first": True}
+            if cutoff:
+                history_kwargs["after"] = cutoff
+
+            async for entry in message.channel.history(**history_kwargs):
+                if entry.author.bot or entry.author.id == self.bot.client.user.id:
+                    continue
+                await handler.record_message(message.guild.id, entry.author.id, entry.content)
+                processed += 1
+                if processed % 200 == 0:
+                    await asyncio.sleep(0)
+        except Exception as e:
+            tb_str = "".join(traceback.format_exception(type(e), e, e.__traceback__))
+            error_message = f"❌ **Backfill failed:**\n```py\n{tb_str[:1800]}\n```"
+            await self.bot.bot_send(message.channel, content=error_message)
+            return
+
+        await self.bot.bot_send(
+            message.channel,
+            content=f"✅ Backfill complete. Processed {processed} messages from {span_text}.",
+        )
+
+    async def command_statsclear(self, message: discord.Message, args: List[str]):
+        """Clears stored word statistics by scope."""
+        handler = getattr(self.bot, "word_stats_handler", None)
+        if not handler or not handler.available:
+            return await self.bot.bot_send(message.channel, content="❌ Word statistics database is not configured.")
+
+        if not args:
+            prefix = self.bot.config.get_prefix(message.guild.id if message.guild else None)
+            usage = (
+                "Usage:\n"
+                f"`{prefix}statsclear word <word> [guild:<id|this>] [user:<id|mention>]`\n"
+                f"`{prefix}statsclear user <id|mention> [guild:<id|this>]`\n"
+                f"`{prefix}statsclear guild [<id|this>]`"
+            )
+            return await self.bot.bot_send(message.channel, content=usage)
+
+        scope = args[0].lower()
+        params = args[1:]
+
+        def parse_guild(arg_list: List[str]) -> Optional[int]:
+            for token in list(arg_list):
+                if token.lower().startswith("guild:"):
+                    value = token.split(":", 1)[1]
+                    arg_list.remove(token)
+                    if value.lower() in {"this", "here"}:
+                        return message.guild.id if message.guild else None
+                    if value.isdigit():
+                        return int(value)
+            return None
+
+        async def send_result(count: int):
+            await self.bot.bot_send(
+                message.channel,
+                content=("✅ Cleared statistics." if count else "ℹ️ No matching statistics found."),
+            )
+
+        if scope == "word":
+            if not params:
+                return await self.bot.bot_send(message.channel, content="❌ Specify a word to clear.")
+            word = params[0].lower()
+            remaining = params[1:]
+            guild_id = parse_guild(remaining)
+            user_id = None
+            for token in list(remaining):
+                if token.lower().startswith("user:"):
+                    value = token.split(":", 1)[1]
+                    remaining.remove(token)
+                    if match := re.search(r"\d+", value):
+                        user_id = int(match.group())
+                    else:
+                        return await self.bot.bot_send(message.channel, content="❌ Invalid user identifier.")
+            count = await handler.delete_stats_by_word(word, guild_id=guild_id, user_id=user_id)
+            await send_result(count)
+            return
+
+        if scope == "user":
+            if not params:
+                return await self.bot.bot_send(message.channel, content="❌ Specify a user to clear.")
+            target = params[0]
+            remaining = params[1:]
+            guild_id = parse_guild(remaining)
+            match = re.search(r"\d+", target)
+            if not match:
+                return await self.bot.bot_send(message.channel, content="❌ Invalid user identifier.")
+            user_id = int(match.group())
+            count = await handler.delete_stats_by_user(user_id, guild_id=guild_id)
+            await send_result(count)
+            return
+
+        if scope == "guild":
+            guild_id = None
+            if params:
+                token = params[0]
+                if token.lower() in {"this", "here"} and message.guild:
+                    guild_id = message.guild.id
+                elif token.isdigit():
+                    guild_id = int(token)
+                else:
+                    return await self.bot.bot_send(message.channel, content="❌ Invalid guild identifier.")
+            elif message.guild:
+                guild_id = message.guild.id
+
+            if guild_id is None:
+                return await self.bot.bot_send(message.channel, content="❌ Specify a guild ID or run in a guild.")
+
+            count = await handler.delete_stats_by_guild(guild_id)
+            await send_result(count)
+            return
+
+        await self.bot.bot_send(message.channel, content="❌ Unknown scope. Use `word`, `user`, or `guild`.")
 
     async def command_alts(self, message: discord.Message, args: List[str]):
         """Alts database management."""

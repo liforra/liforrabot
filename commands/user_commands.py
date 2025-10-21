@@ -1131,16 +1131,32 @@ class UserCommands:
         if not message.guild:
             return await self.bot.bot_send(message.channel, content="❌ Backfill can only be used in servers.")
 
-        days = 7
-        if args and args[0].isdigit():
-            days = max(1, min(30, int(args[0])))
+        if str(message.author.id) not in self.bot.config.admin_ids:
+            return await self.bot.bot_send(message.channel, content="❌ Only bot admins can run backfill.")
 
-        await self.bot.bot_send(message.channel, content=f"⚙️ Backfilling statistics for the last {days} day(s)...")
-        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        days: Optional[int] = 7
+        if args:
+            token = args[0].lower()
+            if token in {"all", "infinite", "full", "*"}:
+                days = None
+            elif token.isdigit():
+                days = int(token)
+            else:
+                return await self.bot.bot_send(message.channel, content="❌ Invalid days value. Use a positive number or `all`.")
+
+        if days is not None and days < 1:
+            days = 7
+
+        span_text = "all available history" if days is None else f"the last {days} day(s)"
+        await self.bot.bot_send(message.channel, content=f"⚙️ Backfilling statistics for {span_text}...")
+        cutoff = None if days is None else datetime.now(timezone.utc) - timedelta(days=days)
         processed = 0
 
         try:
-            async for entry in message.channel.history(limit=None, after=cutoff, oldest_first=True):
+            history_kwargs = {"limit": None, "oldest_first": True}
+            if cutoff:
+                history_kwargs["after"] = cutoff
+            async for entry in message.channel.history(**history_kwargs):
                 if entry.author.bot or entry.author.id == self.bot.client.user.id:
                     continue
                 await handler.record_message(message.guild.id, entry.author.id, entry.content)
@@ -1153,14 +1169,14 @@ class UserCommands:
             await self.bot.bot_send(message.channel, content=error_message)
             return
 
-        await self.bot.bot_send(message.channel, content=f"✅ Backfill complete. Processed {processed} messages from the last {days} day(s).")
+        await self.bot.bot_send(message.channel, content=f"✅ Backfill complete. Processed {processed} messages from {span_text}.")
 
     async def command_help(self, message: discord.Message, args: List[str]):
         """Shows help information."""
         p = self.bot.config.get_prefix(message.guild.id if message.guild else None)
 
         if not args:
-            user_cmds = ", ".join(f"`{cmd}`" for cmd in self.bot.user_commands.keys())
+            user_cmds = ", ".join(f"`{cmd}`" for cmd in self.bot.user_commands.keys() if cmd != 'backfill')
             help_text = f"**Commands:** {user_cmds}\n*Type `{p}help <command>` for more info.*"
             if str(message.author.id) in self.bot.config.admin_ids:
                 admin_cmds = ", ".join(f"`{cmd}`" for cmd in self.bot.admin_commands.keys())

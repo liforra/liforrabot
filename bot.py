@@ -7,7 +7,7 @@ import logging
 import traceback
 from pathlib import Path
 from typing import Dict, Optional, Union, List
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from collections import defaultdict
 
 # It's good practice to handle both discord.py and selfcord imports gracefully
@@ -286,6 +286,176 @@ def register_slash_commands(tree, bot: "Bot"):
             await interaction.followup.send(f"❌ API Error: {e.response.status_code}", ephemeral=_ephemeral)
         except Exception as e:
             await interaction.followup.send(f"❌ An unexpected error occurred: {type(e).__name__}", ephemeral=_ephemeral)
+
+    @bot.app_commands.allowed_installs(guilds=True, users=True)
+    @bot.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+    @tree.command(name="stats", description="Display word usage statistics")
+    @bot.app_commands.describe(
+        mode="Statistic to display",
+        target_user="User to inspect (required for user mode)",
+        word="Word to inspect (required for word mode)",
+        limit="Number of entries to show (1-25)",
+        guild_only="Restrict results to the current server",
+        _ephemeral="Show the response only to you (default: False)",
+    )
+    @bot.app_commands.choices(
+        mode=[
+            bot.app_commands.Choice(name="Global top words", value="overall"),
+            bot.app_commands.Choice(name="Guild top words", value="guild"),
+            bot.app_commands.Choice(name="Most used word", value="most"),
+            bot.app_commands.Choice(name="User's top words", value="user"),
+            bot.app_commands.Choice(name="Word usage", value="word"),
+        ]
+    )
+    async def stats_slash(
+        interaction: discord.Interaction,
+        mode: str,
+        target_user: Optional[discord.User] = None,
+        word: Optional[str] = None,
+        limit: int = 10,
+        guild_only: bool = False,
+        _ephemeral: bool = False,
+    ):
+        handler = bot.word_stats_handler
+        if not handler or not handler.available:
+            await interaction.response.send_message("❌ Word statistics database is not configured.", ephemeral=True)
+            return
+
+        limit = max(1, min(25, limit))
+        await interaction.response.defer(ephemeral=_ephemeral, thinking=True)
+
+        entries = []
+        title = ""
+
+        if mode == "overall":
+            entries = await handler.get_global_top_words(limit)
+            title = f"Top {len(entries)} Words (Global)"
+        elif mode == "guild":
+            if not interaction.guild:
+                await interaction.followup.send("❌ This mode can only be used in a server.", ephemeral=_ephemeral)
+                return
+            entries = await handler.get_guild_top_words(interaction.guild.id, limit)
+            title = f"Top {len(entries)} Words in {interaction.guild.name}"
+        elif mode == "most":
+            entries = await handler.get_global_top_words(1)
+            title = "Most Used Word (Global)"
+        elif mode == "user":
+            if not target_user:
+                await interaction.followup.send("❌ Please specify a user.", ephemeral=_ephemeral)
+                return
+            display_name = getattr(target_user, "display_name", target_user.name)
+            if guild_only:
+                if not interaction.guild:
+                    await interaction.followup.send("❌ Server-specific stats require running this command in a server.", ephemeral=_ephemeral)
+                    return
+                entries = await handler.get_user_guild_top_words(interaction.guild.id, target_user.id, limit)
+                title = f"Top {len(entries)} Words for {display_name} in {interaction.guild.name}"
+            else:
+                entries = await handler.get_user_top_words(target_user.id, limit)
+                title = f"Top {len(entries)} Words for {display_name} (Global)"
+        elif mode == "word":
+            if not word:
+                await interaction.followup.send("❌ Please provide a word to inspect.", ephemeral=_ephemeral)
+                return
+            word_value = word.lower()
+            if guild_only:
+                if not interaction.guild:
+                    await interaction.followup.send("❌ Server-specific stats require running this command in a server.", ephemeral=_ephemeral)
+                    return
+                guild_id = interaction.guild.id
+            else:
+                guild_id = None
+            entries = await handler.get_word_usage_per_user(word_value, limit, guild_id)
+            title = f"Usage of `{word_value}`{' in ' + interaction.guild.name if guild_id else ''}"
+        else:
+            await interaction.followup.send("❌ Unknown mode.", ephemeral=_ephemeral)
+            return
+
+        if not entries:
+            await interaction.followup.send(f"❌ No statistics available for {title or mode}.", ephemeral=_ephemeral)
+            return
+
+        lines = [f"**{title}:**"]
+
+        if mode == "word":
+            guild_limited = guild_only and interaction.guild
+            for idx, row in enumerate(entries, start=1):
+                user_display = f"<@{row['user_id']}>"
+                if interaction.guild:
+                    member = interaction.guild.get_member(row['user_id'])
+                    if member:
+                        user_display = member.display_name
+                if not guild_limited:
+                    gid = row.get("guild_id")
+                    if not gid:
+                        guild_info = " (DMs)"
+                    else:
+                        guild = bot.client.get_guild(gid)
+                        guild_info = f" ({guild.name})" if guild else f" ({gid})"
+                else:
+                    guild_info = ""
+                lines.append(f"{idx}. {user_display} — {row['count']:,}{guild_info}")
+        else:
+            for idx, item in enumerate(entries, start=1):
+                lines.append(f"{idx}. `{item['word']}` — {item['count']:,}")
+
+        lines.append("\n*liforra.de | Liforras Utility bot*")
+        await interaction.followup.send("\n".join(lines), ephemeral=_ephemeral)
+
+    @bot.app_commands.allowed_installs(guilds=True, users=False)
+    @bot.app_commands.allowed_contexts(guilds=True, dms=False, private_channels=True)
+    @tree.command(name="backfill", description="Backfill word statistics for this channel")
+    @bot.app_commands.describe(
+        days="Number of days to backfill (1-30, default 7)",
+        _ephemeral="Show the response only to you (default: False)",
+    )
+    async def backfill_slash(
+        interaction: discord.Interaction,
+        days: int = 7,
+        _ephemeral: bool = False,
+    ):
+        handler = bot.word_stats_handler
+        if not handler or not handler.available:
+            await interaction.response.send_message("❌ Word statistics database is not configured.", ephemeral=True)
+            return
+
+        if str(interaction.user.id) not in bot.config.admin_ids:
+            await interaction.response.send_message("❌ Only bot admins can run backfill.", ephemeral=True)
+            return
+
+        if not interaction.guild or not hasattr(interaction.channel, "history"):
+            await interaction.response.send_message("❌ Backfill can only be used in regular server channels.", ephemeral=True)
+            return
+
+        span_text = ""
+        cutoff = None
+        if days is None or days <= 0:
+            span_text = "all available history"
+        else:
+            span_text = f"the last {days} day(s)"
+            cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+
+        await interaction.response.defer(ephemeral=_ephemeral, thinking=True)
+
+        processed = 0
+
+        try:
+            async for message in interaction.channel.history(limit=None, after=cutoff, oldest_first=True):
+                if message.author.bot or (bot.client and message.author.id == bot.client.user.id):
+                    continue
+                await handler.record_message(interaction.guild.id, message.author.id, message.content)
+                processed += 1
+                if processed % 200 == 0:
+                    await asyncio.sleep(0)
+        except Exception as e:
+            tb_str = ''.join(traceback.format_exception(type(e), e, e.__traceback__))
+            await interaction.followup.send(f"❌ **Backfill failed:**\n```py\n{tb_str[:1800]}\n```", ephemeral=_ephemeral)
+            return
+
+        await interaction.followup.send(
+            f"✅ Backfill complete. Processed {processed} messages from {span_text or 'all available history'}.",
+            ephemeral=_ephemeral,
+        )
 
     @bot.app_commands.allowed_installs(guilds=True, users=True)
     @bot.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
@@ -930,7 +1100,6 @@ class Bot:
             "phone": self.user_commands_handler.command_phone,
             "shodan": self.user_commands_handler.command_shodan,
             "stats": self.user_commands_handler.command_stats,
-            "backfill": self.user_commands_handler.command_backfill,
         }
         self.admin_commands = {
             "reload-config": self.admin_commands_handler.command_reload_config,
@@ -939,6 +1108,8 @@ class Bot:
             "override": self.admin_commands_handler.command_override,
             "alts": self.admin_commands_handler.command_alts,
             "qrlogin": self.admin_commands_handler.command_qrlogin,
+            "backfill": self.admin_commands_handler.command_backfill,
+            "statsclear": self.admin_commands_handler.command_statsclear,
         }
 
         self.command_help_texts = {}
