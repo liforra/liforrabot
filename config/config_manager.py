@@ -141,6 +141,28 @@ class ConfigManager:
                 stats_db_password if stats_db_password not in (None, "") else self.oauth_db_password
             )
 
+            if (self.stats_db_type != "postgres" or not self.stats_db_url) and Path("config.toml").exists():
+                try:
+                    root_conf = toml.load(Path("config.toml"))
+                    root_general = root_conf.get("general", {})
+                    root_stats_type = root_general.get("stats-db-type")
+                    root_stats_url = root_general.get("stats-db-url")
+                    root_stats_user = root_general.get("stats-db-user")
+                    root_stats_password = root_general.get("stats-db-password")
+
+                    if root_stats_url:
+                        self.stats_db_type = root_stats_type or "postgres"
+                        self.stats_db_url = root_stats_url
+                        self.stats_db_user = root_stats_user if root_stats_user not in (None, "") else self.stats_db_user
+                        self.stats_db_password = root_stats_password if root_stats_password not in (None, "") else self.stats_db_password
+                    elif root_general.get("oauth-db-type") == "postgres" and root_general.get("oauth-db-url"):
+                        self.stats_db_type = "postgres"
+                        self.stats_db_url = root_general.get("oauth-db-url")
+                        self.stats_db_user = root_general.get("oauth-db-user", self.stats_db_user)
+                        self.stats_db_password = root_general.get("oauth-db-password", self.stats_db_password)
+                except Exception as e:
+                    print(f"[{self.data_dir.name}] Warning: failed to load root stats DB config: {e}")
+
             self.guild_configs = self.config_data.get("guild", {})
 
             print(f"[{self.data_dir.name}] Config loaded.")
