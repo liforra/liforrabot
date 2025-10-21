@@ -997,8 +997,6 @@ class Bot:
                 client_secret=self.config.oauth_client_secret,
             )
 
-        self.alts_handler = AltsHandler(self.config)
-
         existing_pool = None
         if self.config.stats_db_type == self.config.oauth_db_type == "postgres" and self.oauth_handler and getattr(self.oauth_handler, "pg_pool", None):
             existing_pool = self.oauth_handler.pg_pool
