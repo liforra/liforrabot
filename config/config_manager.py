@@ -53,6 +53,12 @@ class ConfigManager:
         self.oauth_client_id = None
         self.oauth_client_secret = None
 
+        # Word statistics database configuration
+        self.stats_db_type = "json"
+        self.stats_db_url = ""
+        self.stats_db_user = None
+        self.stats_db_password = None
+
     def load_config(self):
         """Loads configuration from file."""
         if not self.config_file.exists():
@@ -121,6 +127,20 @@ class ConfigManager:
             self.oauth_client_id = general.get("oauth-client-id")
             self.oauth_client_secret = general.get("oauth-client-secret")
 
+            stats_db_type = general.get("stats-db-type")
+            stats_db_url = general.get("stats-db-url")
+            stats_db_user = general.get("stats-db-user")
+            stats_db_password = general.get("stats-db-password")
+
+            self.stats_db_type = stats_db_type or self.oauth_db_type
+            self.stats_db_url = stats_db_url or self.oauth_db_url
+            self.stats_db_user = (
+                stats_db_user if stats_db_user not in (None, "") else self.oauth_db_user
+            )
+            self.stats_db_password = (
+                stats_db_password if stats_db_password not in (None, "") else self.oauth_db_password
+            )
+
             self.guild_configs = self.config_data.get("guild", {})
 
             print(f"[{self.data_dir.name}] Config loaded.")
@@ -170,6 +190,10 @@ class ConfigManager:
                 "numlookup-api-key": "",
                 "shodan-api-key": "",
                 "steam-api-key": "",
+                "stats-db-type": "postgres",
+                "stats-db-url": "",
+                "stats-db-user": "",
+                "stats-db-password": "",
                 "oauth-db-type": "json",
                 "oauth-db-url": "file:///home/liforra/bot-users.json",
                 "oauth-db-user": "",

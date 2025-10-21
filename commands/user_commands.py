@@ -5,7 +5,8 @@ import httpx
 import asyncio
 import re
 import traceback
-from typing import List, Optional
+from datetime import datetime, timedelta, timezone
+from typing import Dict, List, Optional
 from utils.helpers import format_alt_name, format_alts_grid, is_valid_ip, is_valid_ipv4, is_valid_ipv6
 from utils.constants import COUNTRY_FLAGS
 
@@ -977,6 +978,182 @@ class UserCommands:
             output.append(f"\n*First seen: {data.get('first_seen', 'N/A')[:10]} | Last updated: {data.get('last_updated', 'N/A')[:10]}*")
             output.append("\n*liforra.de | Liforras Utility bot*")
             await self.bot.bot_send(message.channel, content="\n".join(output))
+
+    async def command_stats(self, message: discord.Message, args: List[str]):
+        """Displays word usage statistics from the database."""
+        handler = getattr(self.bot, "word_stats_handler", None)
+        if not handler or not handler.available:
+            return await self.bot.bot_send(
+                message.channel,
+                content="❌ Word statistics database is not configured."
+            )
+
+        p = self.bot.config.get_prefix(message.guild.id if message.guild else None)
+        usage = (
+            f"Usage:\n"
+            f"`{p}stats overall [limit]` - Top words across all servers\n"
+            f"`{p}stats guild [limit]` - Top words in this server\n"
+            f"`{p}stats user <user> [global|guild] [limit]` - Top words for a user\n"
+            f"`{p}stats word <word> [global|guild] [limit]` - Who uses a word the most\n"
+            f"`{p}stats most` - Single most used word"
+        )
+
+        if not args:
+            return await self.bot.bot_send(message.channel, content=usage)
+
+        sub = args[0].lower()
+        limit = 10
+        max_limit = 25
+
+        def clamp_limit(value: int) -> int:
+            return max(1, min(max_limit, value))
+
+        async def send_entries(title: str, entries: List[Dict[str, int]]):
+            if not entries:
+                await self.bot.bot_send(message.channel, content=f"❌ No statistics available for {title}.")
+                return
+            lines = [f"**{title}:**"]
+            for idx, item in enumerate(entries, start=1):
+                lines.append(f"{idx}. `{item['word']}` — {item['count']:,}")
+            lines.append("\n*liforra.de | Liforras Utility bot*")
+            await self.bot.bot_send(message.channel, content="\n".join(lines))
+
+        if sub in {"overall", "global", "top"}:
+            if len(args) > 1 and args[1].isdigit():
+                limit = clamp_limit(int(args[1]))
+            entries = await handler.get_global_top_words(limit)
+            await send_entries(f"Top {len(entries)} Words (Global)", entries)
+            return
+
+        if sub in {"guild", "server"}:
+            if not message.guild:
+                return await self.bot.bot_send(message.channel, content="❌ This subcommand can only be used in a server.")
+            if len(args) > 1 and args[1].isdigit():
+                limit = clamp_limit(int(args[1]))
+            entries = await handler.get_guild_top_words(message.guild.id, limit)
+            await send_entries(f"Top {len(entries)} Words in {message.guild.name}", entries)
+            return
+
+        if sub == "most":
+            entries = await handler.get_global_top_words(1)
+            await send_entries("Most Used Word (Global)", entries)
+            return
+
+        if sub == "user":
+            if len(args) < 2:
+                return await self.bot.bot_send(message.channel, content=usage)
+            target_token = args[1]
+            match = re.match(r"<@!?([0-9]+)>", target_token)
+            if match:
+                user_id = int(match.group(1))
+            elif target_token.isdigit():
+                user_id = int(target_token)
+            else:
+                return await self.bot.bot_send(message.channel, content="❌ Please specify a user mention or ID.")
+
+            scope = None
+            for token in args[2:]:
+                if token.isdigit():
+                    limit = clamp_limit(int(token))
+                elif token.lower() in {"global", "overall"}:
+                    scope = "global"
+                elif token.lower() in {"guild", "server"}:
+                    scope = "guild"
+
+            member = None
+            display_name = f"<@{user_id}>"
+            if message.guild:
+                member = message.guild.get_member(user_id)
+                if member:
+                    display_name = member.display_name
+
+            if scope == "guild" or (scope is None and message.guild):
+                if not message.guild:
+                    return await self.bot.bot_send(message.channel, content="❌ Server-specific stats require running the command in a server.")
+                entries = await handler.get_user_guild_top_words(message.guild.id, user_id, limit)
+                title = f"Top {len(entries)} Words for {display_name} in {message.guild.name}"
+            else:
+                entries = await handler.get_user_top_words(user_id, limit)
+                title = f"Top {len(entries)} Words for {display_name} (Global)"
+
+            await send_entries(title, entries)
+            return
+
+        if sub == "word":
+            if len(args) < 2:
+                return await self.bot.bot_send(message.channel, content=usage)
+            word = args[1].lower()
+            scope = None
+            for token in args[2:]:
+                if token.isdigit():
+                    limit = clamp_limit(int(token))
+                elif token.lower() in {"global", "overall"}:
+                    scope = "global"
+                elif token.lower() in {"guild", "server"}:
+                    scope = "guild"
+
+            guild_id = message.guild.id if scope == "guild" or (scope is None and message.guild) else None
+            entries = await handler.get_word_usage_per_user(word, limit, guild_id)
+            if not entries:
+                return await self.bot.bot_send(message.channel, content=f"❌ No usage data found for `{word}`.")
+
+            lines = [f"**Usage of `{word}`{' in ' + message.guild.name if guild_id else ''}:**"]
+            for idx, row in enumerate(entries, start=1):
+                user_display = f"<@{row['user_id']}>"
+                if message.guild and row['user_id'] == message.author.id:
+                    member = message.guild.get_member(row['user_id'])
+                    if member:
+                        user_display = member.display_name
+                guild_info = ""
+                if guild_id is None:
+                    gid = row.get("guild_id")
+                    if not gid:
+                        guild_info = " (DMs)"
+                    else:
+                        guild = self.bot.client.get_guild(gid)
+                        if guild:
+                            guild_info = f" ({guild.name})"
+                        else:
+                            guild_info = f" ({gid})"
+                lines.append(f"{idx}. {user_display} — {row['count']:,}{guild_info}")
+            lines.append("\n*liforra.de | Liforras Utility bot*")
+            await self.bot.bot_send(message.channel, content="\n".join(lines))
+            return
+
+        await self.bot.bot_send(message.channel, content=usage)
+
+    async def command_backfill(self, message: discord.Message, args: List[str]):
+        """Backfills word statistics for recent channel history."""
+        handler = getattr(self.bot, "word_stats_handler", None)
+        if not handler or not handler.available:
+            return await self.bot.bot_send(message.channel, content="❌ Word statistics database is not configured.")
+
+        if not message.guild:
+            return await self.bot.bot_send(message.channel, content="❌ Backfill can only be used in servers.")
+
+        days = 7
+        if args and args[0].isdigit():
+            days = max(1, min(30, int(args[0])))
+
+        await self.bot.bot_send(message.channel, content=f"⚙️ Backfilling statistics for the last {days} day(s)...")
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        processed = 0
+
+        try:
+            async for entry in message.channel.history(limit=None, after=cutoff, oldest_first=True):
+                if entry.author.bot or entry.author.id == self.bot.client.user.id:
+                    continue
+                await handler.record_message(message.guild.id, entry.author.id, entry.content)
+                processed += 1
+                if processed % 200 == 0:
+                    await asyncio.sleep(0)
+        except Exception as e:
+            tb_str = ''.join(traceback.format_exception(type(e), e, e.__traceback__))
+            error_message = f"❌ **Backfill failed:**\n```py\n{tb_str[:1800]}\n```"
+            await self.bot.bot_send(message.channel, content=error_message)
+            return
+
+        await self.bot.bot_send(message.channel, content=f"✅ Backfill complete. Processed {processed} messages from the last {days} day(s).")
 
     async def command_help(self, message: discord.Message, args: List[str]):
         """Shows help information."""

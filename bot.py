@@ -25,6 +25,7 @@ from handlers.ip_handler import IPHandler
 from handlers.logging_handler import LoggingHandler
 from handlers.oauth_handler import OAuthHandler
 from handlers.phone_handler import PhoneHandler
+from handlers.word_stats_handler import WordStatsHandler
 from commands.user_commands import UserCommands
 from commands.admin_commands import AdminCommands
 from utils.constants import SWEAR_WORDS, SLUR_WORDS, ASTEROIDE_BOT_ID
@@ -905,6 +906,7 @@ class Bot:
         self.logging_handler = LoggingHandler(data_dir)
         self.oauth_handler = None
         self.phone_handler = None
+        self.word_stats_handler = None
         self.user_commands_handler = UserCommands(self)
         self.admin_commands_handler = AdminCommands(self)
 
@@ -927,6 +929,8 @@ class Bot:
             "alts": self.user_commands_handler.command_alts,
             "phone": self.user_commands_handler.command_phone,
             "shodan": self.user_commands_handler.command_shodan,
+            "stats": self.user_commands_handler.command_stats,
+            "backfill": self.user_commands_handler.command_backfill,
         }
         self.admin_commands = {
             "reload-config": self.admin_commands_handler.command_reload_config,
@@ -992,17 +996,31 @@ class Bot:
                 client_id=self.config.oauth_client_id,
                 client_secret=self.config.oauth_client_secret,
             )
-            
-            # Initialize phone handler with same database settings
+
+        self.alts_handler = AltsHandler(self.config)
+
+        existing_pool = None
+        if self.config.stats_db_type == self.config.oauth_db_type == "postgres" and self.oauth_handler and getattr(self.oauth_handler, "pg_pool", None):
+            existing_pool = self.oauth_handler.pg_pool
+
+        self.word_stats_handler = WordStatsHandler(
+            self.config.stats_db_type,
+            self.config.stats_db_url,
+            self.config.stats_db_user,
+            self.config.stats_db_password,
+            existing_pool=existing_pool,
+        )
+
+        if self.token_type == "bot" and self.config.oauth_db_type == "postgres":
             self.phone_handler = PhoneHandler(
                 data_dir=self.data_dir,
-                db_type=self.config.oauth_db_type,
+                db_type="postgres",
                 db_url=self.config.oauth_db_url,
                 db_user=self.config.oauth_db_user,
                 db_password=self.config.oauth_db_password,
             )
         else:
-            # For user tokens, use JSON storage
+            # For user tokens or non-Postgres configs, use JSON storage
             self.phone_handler = PhoneHandler(
                 data_dir=self.data_dir,
                 db_type="json"
@@ -1202,6 +1220,16 @@ class Bot:
             await self.logging_handler.log_dm(message)
 
         await self._handle_sync_message(message)
+
+        if (
+            self.word_stats_handler
+            and self.word_stats_handler.available
+        ):
+            await self.word_stats_handler.record_message(
+                message.guild.id if message.guild else None,
+                message.author.id,
+                message.content,
+            )
 
         if self.token_type != "user": return
         
