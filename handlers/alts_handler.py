@@ -18,6 +18,8 @@ class AltsHandler:
         self.alts_command_counter = 0
         self._last_alts_fetch: Optional[datetime] = None
         self._cached_remote_data: Optional[Dict] = None
+        self.alts_override_file = data_dir / "alts_override.json"
+        self.alts_overrides = self.load_alts_overrides()
 
     def load_and_preprocess_alts_data(self):
         """Loads and preprocesses alts data with Spigey isolation if enabled."""
@@ -126,6 +128,9 @@ class AltsHandler:
             for user in final_spigey_group["alts"]:
                 self.alts_data[user] = final_spigey_group
 
+        if self.apply_overrides(timestamp):
+            print("[Alts Pre-processor] Override rules applied.")
+
         print(
             f"[Alts Pre-processor] Process complete. Loaded {len(self.alts_data)} total records."
         )
@@ -159,6 +164,9 @@ class AltsHandler:
         else:
             self.alts_data = {}
 
+        if self.apply_overrides():
+            self.save_alts_data()
+
     def save_alts_data(self):
         """Saves alts data to disk."""
         try:
@@ -175,6 +183,133 @@ class AltsHandler:
                 json.dump(data_to_save, f, indent=2, ensure_ascii=False)
         except Exception as e:
             print(f"[{self.data_dir.name}] Error saving alts data: {e}")
+
+    def load_alts_overrides(self) -> Dict[str, Dict[str, Set[str]]]:
+        """Loads override definitions from disk."""
+        overrides: Dict[str, Dict[str, Set[str]]] = {}
+        if not self.alts_override_file.exists():
+            return overrides
+
+        try:
+            with open(self.alts_override_file, "r", encoding="utf-8") as f:
+                raw_overrides = json.load(f)
+        except Exception as e:
+            print(f"[Alts Override] Error loading overrides: {e}")
+            return overrides
+
+        if not isinstance(raw_overrides, dict):
+            print("[Alts Override] Invalid override format. Expected a JSON object at root.")
+            return overrides
+
+        for main_name, entry in raw_overrides.items():
+            if not isinstance(entry, dict):
+                continue
+
+            alt_values = entry.get("alts", [])
+            if not isinstance(alt_values, list):
+                alt_values = []
+            alt_set = {str(name) for name in alt_values if isinstance(name, str)}
+
+            ips_specified = "ips" in entry
+            ip_values = entry.get("ips", []) if ips_specified else []
+            if not isinstance(ip_values, list):
+                ip_values = []
+            ip_set = {
+                ip
+                for ip in ip_values
+                if isinstance(ip, str) and (is_valid_ipv4(ip) or is_valid_ipv6(ip))
+            }
+
+            overrides[str(main_name)] = {
+                "alts": alt_set,
+                "ips": ip_set,
+                "ips_specified": ips_specified,
+            }
+
+        return overrides
+
+    def apply_overrides(self, timestamp: Optional[str] = None) -> bool:
+        """Applies override rules to isolate specified accounts and IPs."""
+        self.alts_overrides = self.load_alts_overrides()
+        if not self.alts_overrides:
+            return False
+
+        changed = False
+        timestamp = timestamp or datetime.now().isoformat()
+
+        for main_name, override in self.alts_overrides.items():
+            override_alts = set(override.get("alts", set()))
+            override_alts.add(main_name)
+
+            existing_first_seen = []
+            existing_ips: Set[str] = set()
+            for name in override_alts:
+                record = self.alts_data.get(name)
+                if record:
+                    if record.get("first_seen"):
+                        existing_first_seen.append(record.get("first_seen"))
+                    existing_ips.update(record.get("ips", set()))
+
+            if override.get("ips_specified"):
+                override_ips = set(override.get("ips", set()))
+            else:
+                override_ips = set(existing_ips)
+
+            override_ips = {
+                ip
+                for ip in override_ips
+                if is_valid_ipv4(ip) or is_valid_ipv6(ip)
+            }
+
+            first_seen_candidates = [fs for fs in existing_first_seen if fs]
+            first_seen = min(first_seen_candidates) if first_seen_candidates else timestamp
+
+            for username, record in list(self.alts_data.items()):
+                if username in override_alts:
+                    continue
+
+                original_alts = set(record.get("alts", set()))
+                original_ips = set(record.get("ips", set()))
+
+                updated_alts = original_alts - override_alts
+                if username not in updated_alts:
+                    updated_alts.add(username)
+                updated_ips = original_ips - override_ips
+
+                if updated_alts != original_alts or updated_ips != original_ips:
+                    changed = True
+                    record["alts"] = updated_alts
+                    record["ips"] = updated_ips
+                    if not record.get("first_seen"):
+                        record["first_seen"] = timestamp
+                    record["last_updated"] = timestamp
+
+            override_alts_final = set(override_alts)
+            override_ips_final = set(override_ips)
+
+            for name in override_alts_final:
+                existing = self.alts_data.get(name)
+                previous_alts = existing.get("alts") if existing else set()
+                previous_ips = existing.get("ips") if existing else set()
+                previous_first_seen = existing.get("first_seen") if existing else None
+
+                if (
+                    existing is None
+                    or previous_alts != override_alts_final
+                    or previous_ips != override_ips_final
+                    or previous_first_seen != first_seen
+                    or existing.get("last_updated") != timestamp
+                ):
+                    changed = True
+
+                self.alts_data[name] = {
+                    "alts": set(override_alts_final),
+                    "ips": set(override_ips_final),
+                    "first_seen": first_seen,
+                    "last_updated": timestamp,
+                }
+
+        return changed
 
     def parse_alts_response(self, content: str) -> Optional[Dict]:
         """Parses Asteroide bot response."""
@@ -235,6 +370,7 @@ class AltsHandler:
             self.alts_data[user]["ips"].update(all_ips_in_group)
             self.alts_data[user]["last_updated"] = parsed_data["timestamp"]
 
+        self.apply_overrides(parsed_data["timestamp"])
         self.save_alts_data()
         print(f"[AltsHandler] Updated alts data for group starting with {main_user}")
 
@@ -387,6 +523,8 @@ class AltsHandler:
                     self.alts_data[user]["ips"].update(all_ips_in_group)
                     self.alts_data[user]["last_updated"] = timestamp
 
+        overrides_changed = self.apply_overrides(timestamp)
+
         # Fetch IP geo data for new IPs
         print("[Alts Refresh] Fetching IP geolocation data...")
         all_ips = set()
@@ -416,7 +554,7 @@ class AltsHandler:
             ip_handler.save_ip_geo_data()
             print(f"[Alts Refresh] Saved geo data for {len(geo_results)} IPs")
 
-        if update_count > 0:
+        if update_count > 0 or overrides_changed:
             self.save_alts_data()
 
         print(f"[Alts Refresh] Successfully merged data for {update_count} groups.")
