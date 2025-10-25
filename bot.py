@@ -892,9 +892,16 @@ def register_slash_commands(tree, bot: "Bot"):
 
         for i, embed in enumerate(embeds):
             embed.set_footer(text=f"liforra.de | Liforras Utility bot | Page {i+1}/{len(embeds)}")
-            
-        view = PaginationView(embeds, bot.discord) if len(embeds) > 1 else None
-        await interaction.followup.send(embed=embeds[0], view=view, ephemeral=_ephemeral)
+
+        pagination = PaginationView(embeds, bot.discord) if len(embeds) > 1 else None
+        sent_message = await interaction.followup.send(
+            embed=embeds[0],
+            view=pagination.view if pagination else None,
+            ephemeral=_ephemeral,
+        )
+
+        if pagination:
+            pagination.message = sent_message
 
     @bot.app_commands.allowed_installs(guilds=True, users=True)
     @bot.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
