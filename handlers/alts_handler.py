@@ -250,10 +250,9 @@ class AltsHandler:
                         existing_first_seen.append(record.get("first_seen"))
                     existing_ips.update(record.get("ips", set()))
 
+            override_ips = set(existing_ips)
             if override.get("ips_specified"):
-                override_ips = set(override.get("ips", set()))
-            else:
-                override_ips = set(existing_ips)
+                override_ips.update(override.get("ips", set()))
 
             override_ips = {
                 ip
