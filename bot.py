@@ -26,6 +26,7 @@ from handlers.logging_handler import LoggingHandler
 from handlers.oauth_handler import OAuthHandler
 from handlers.phone_handler import PhoneHandler
 from handlers.word_stats_handler import WordStatsHandler
+from handlers.mc_server_handler import MCServerHandler
 from commands.user_commands import UserCommands
 from commands.admin_commands import AdminCommands
 from utils.constants import SWEAR_WORDS, SLUR_WORDS, ASTEROIDE_BOT_ID
@@ -822,7 +823,6 @@ def register_slash_commands(tree, bot: "Bot"):
         _ephemeral="Show the response only to you (default: False)"
     )
     async def alts_slash(interaction: discord.Interaction, username: str, _ip: bool = False, _ephemeral: bool = False):
-        bot.log_command(interaction.user.id, str(interaction.user), "alts", [username, str(_ip)], is_slash=True)
         if not await bot.check_authorization(interaction.user.id):
             await interaction.response.send_message(bot.oauth_handler.get_authorization_message(interaction.user.mention), ephemeral=True)
             return
@@ -833,6 +833,7 @@ def register_slash_commands(tree, bot: "Bot"):
             return
         
         await interaction.response.defer(ephemeral=_ephemeral)
+        bot.log_command(interaction.user.id, str(interaction.user), "alts", [username, str(_ip)], is_slash=True)
         
         search_term = username
         found_user = None
@@ -854,10 +855,25 @@ def register_slash_commands(tree, bot: "Bot"):
         show_ips = _ip and is_admin
         embeds = []
         
-        first_seen_ts = int(datetime.fromisoformat(data.get("first_seen")).timestamp())
-        last_updated_ts = int(datetime.fromisoformat(data.get("last_updated")).timestamp())
-        
-        info_embed = discord.Embed(title=f"👥 Alt Report for {discord.utils.escape_markdown(found_user)}", color=0xE74C3C, description=f"First Seen: <t:{first_seen_ts}:F>\nLast Updated: <t:{last_updated_ts}:R>")
+        def _safe_timestamp(ts_str):
+            if not ts_str:
+                return None
+            try:
+                return int(datetime.fromisoformat(ts_str).timestamp())
+            except (ValueError, TypeError):
+                try:
+                    return int(datetime.fromisoformat(ts_str.replace("Z", "+00:00")).timestamp())
+                except Exception:
+                    return None
+
+        first_seen_ts = _safe_timestamp(data.get("first_seen"))
+        last_updated_ts = _safe_timestamp(data.get("last_updated"))
+
+        desc_lines = []
+        desc_lines.append(f"First Seen: <t:{first_seen_ts}:F>" if first_seen_ts is not None else "First Seen: Unknown")
+        desc_lines.append(f"Last Updated: <t:{last_updated_ts}:R>" if last_updated_ts is not None else "Last Updated: Unknown")
+
+        info_embed = discord.Embed(title=f"👥 Alt Report for {discord.utils.escape_markdown(found_user)}", color=0xE74C3C, description="\n".join(desc_lines))
         embeds.append(info_embed)
 
         if alts:
@@ -1077,6 +1093,7 @@ class Bot:
         self.oauth_handler = None
         self.phone_handler = None
         self.word_stats_handler = None
+        self.mc_server_handler = MCServerHandler(data_dir)
         self.user_commands_handler = UserCommands(self)
         self.admin_commands_handler = AdminCommands(self)
 
@@ -1100,6 +1117,9 @@ class Bot:
             "phone": self.user_commands_handler.command_phone,
             "shodan": self.user_commands_handler.command_shodan,
             "stats": self.user_commands_handler.command_stats,
+            "search": self.user_commands_handler.command_mcsearch,
+            "random": self.user_commands_handler.command_mcrandom,
+            "playerhistory": self.user_commands_handler.command_mcplayers,
         }
         self.admin_commands = {
             "reload-config": self.admin_commands_handler.command_reload_config,

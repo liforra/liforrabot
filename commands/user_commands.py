@@ -1171,6 +1171,71 @@ class UserCommands:
 
         await self.bot.bot_send(message.channel, content=f"✅ Backfill complete. Processed {processed} messages from {span_text}.")
 
+    async def command_mcsearch(self, message: discord.Message, args: List[str]):
+        """Search for a Minecraft server by IP or hostname.
+        
+        Usage: /search <ip/hostname> [port]
+        Example: /search play.hypixel.net
+        """
+        if not args:
+            return await self.bot.bot_send(
+                message.channel,
+                content="Please provide a server IP or hostname to search. Example: `/search play.hypixel.net`"
+            )
+        
+        server_address = args[0]
+        if len(args) > 1 and args[1].isdigit():
+            server_address = f"{server_address}:{args[1]}"
+        
+        await message.channel.typing()
+        server_data = await self.bot.mc_server_handler.search_servers(server_address)
+        embed = self.bot.mc_server_handler.format_server_embed(server_data, server_address)
+        await self.bot.bot_send(message.channel, embed=embed)
+
+    async def command_mcrandom(self, message: discord.Message, args: List[str]):
+        """Get a random Minecraft server from history.
+        
+        Usage: /random
+        """
+        await message.channel.typing()
+        server_data = await self.bot.mc_server_handler.get_random_server()
+        if "error" in server_data:
+            await self.bot.bot_send(message.channel, content=server_data["error"])
+            return
+            
+        # Get the server address from the server data
+        server_address = server_data.get("hostname", "unknown")
+        if not server_address or server_address == "unknown":
+            # If hostname is not available, try to get IP
+            server_address = server_data.get("ip", "unknown")
+            if server_address == "unknown":
+                await self.bot.bot_send(message.channel, content="Could not determine server address.")
+                return
+                
+        embed = self.bot.mc_server_handler.format_server_embed(server_data, server_address)
+        await self.bot.bot_send(message.channel, embed=embed)
+
+    async def command_mcplayers(self, message: discord.Message, args: List[str]):
+        """View player history for a Minecraft server.
+        
+        Usage: /playerhistory <ip/hostname> [port]
+        Example: /playerhistory play.hypixel.net
+        """
+        if not args:
+            return await self.bot.bot_send(
+                message.channel,
+                content="Please provide a server IP or hostname. Example: `/playerhistory play.hypixel.net`"
+            )
+            
+        server_address = args[0]
+        if len(args) > 1 and args[1].isdigit():
+            server_address = f"{server_address}:{args[1]}"
+            
+        await message.channel.typing()
+        history_data = await self.bot.mc_server_handler.get_player_history(server_address)
+        embed = self.bot.mc_server_handler.format_player_history_embed(history_data)
+        await self.bot.bot_send(message.channel, embed=embed)
+
     async def command_help(self, message: discord.Message, args: List[str]):
         """Shows help information."""
         p = self.bot.config.get_prefix(message.guild.id if message.guild else None)
@@ -1181,7 +1246,7 @@ class UserCommands:
             if str(message.author.id) in self.bot.config.admin_ids:
                 admin_cmds = ", ".join(f"`{cmd}`" for cmd in self.bot.admin_commands.keys())
                 help_text += f"\n\n**Admin Commands:** {admin_cmds}"
-            help_text += "\n\n*liforra.de | Liforras Utility bot*"
+            help_text += "\n\n**Minecraft Commands:** `search`, `random`, `playerhistory`\n\n*liforra.de | Liforras Utility bot*"
             await self.bot.bot_send(message.channel, content=help_text)
         else:
             cmd_name = args[0].lower()

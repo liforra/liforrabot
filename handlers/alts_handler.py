@@ -5,7 +5,7 @@ import re
 import httpx
 from pathlib import Path
 from typing import Dict, Set, Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 from utils.helpers import is_valid_ipv4, is_valid_ipv6
 
 
@@ -16,6 +16,8 @@ class AltsHandler:
         self.alts_data = {}
         self.clean_spigey = clean_spigey
         self.alts_command_counter = 0
+        self._last_alts_fetch: Optional[datetime] = None
+        self._cached_remote_data: Optional[Dict] = None
 
     def load_and_preprocess_alts_data(self):
         """Loads and preprocesses alts data with Spigey isolation if enabled."""
@@ -236,21 +238,40 @@ class AltsHandler:
         self.save_alts_data()
         print(f"[AltsHandler] Updated alts data for group starting with {main_user}")
 
-    async def refresh_alts_data(self, alts_refresh_url: str, ip_handler) -> bool:
+    async def refresh_alts_data(self, alts_refresh_url: str, ip_handler, http_client: Optional[httpx.AsyncClient] = None) -> bool:
         """Refreshes alts data from remote source."""
         if not alts_refresh_url:
             print("[Alts Refresh] URL not configured.")
             return False
 
-        print("[Alts Refresh] Fetching remote data...")
-        try:
-            async with httpx.AsyncClient() as client:
+        recent_cache_valid = (
+            self._cached_remote_data is not None
+            and self._last_alts_fetch is not None
+            and (datetime.now() - self._last_alts_fetch) < timedelta(seconds=5)
+        )
+
+        if recent_cache_valid:
+            print("[Alts Refresh] Using cached remote data (recent fetch).")
+            remote_data = self._cached_remote_data
+        else:
+            client = http_client or httpx.AsyncClient()
+            own_client = http_client is None
+
+            print("[Alts Refresh] Fetching remote data...")
+            try:
                 res = await client.get(alts_refresh_url, timeout=30)
                 res.raise_for_status()
                 remote_data = res.json()
-        except (httpx.RequestError, httpx.HTTPStatusError, json.JSONDecodeError) as e:
-            print(f"[Alts Refresh] Failed to fetch or parse remote data: {e}")
-            return False
+                self._cached_remote_data = remote_data
+                self._last_alts_fetch = datetime.now()
+            except (httpx.RequestError, httpx.HTTPStatusError, json.JSONDecodeError) as e:
+                print(f"[Alts Refresh] Failed to fetch or parse remote data: {e}")
+                if own_client:
+                    await client.aclose()
+                return False
+            finally:
+                if own_client:
+                    await client.aclose()
 
         timestamp = datetime.now().isoformat()
         update_count = 0
