@@ -44,26 +44,27 @@ class UserCommands:
         return content, memory
 
     async def command_ask(self, message: discord.Message, args: List[str]):
-        """Ask Luma AI a question with memory and context."""
-        # Handle memory and extract question
-        full_message = " ".join(args)
-        question, memory = await self._handle_memory(message, full_message)
+        """Handle asks and pings without system prompt changes."""
+        bot_id = str(self.bot.client.user.id)
         
-        # Check if triggered by mention or command
-        is_mentioned = self.bot.client.user in message.mentions
+        # Check all ping formats without affecting system prompt
+        is_pinged = (
+            self.bot.client.user in message.mentions or
+            f"<@{bot_id}>" in message.content or
+            f"<@!{bot_id}>" in message.content
+        )
+        
+        # Check command prefix
         is_command = message.content.startswith(
             self.bot.config.get_prefix(message.guild.id if message.guild else None)
         )
         
-        if not (is_mentioned or is_command or message.reference):
+        if not (is_pinged or is_command or message.reference):
             return
             
-        if not question and not message.mentions and not message.reference:
-            return await self.bot.bot_send(
-                message.channel,
-                content="Please provide a question after mentioning me."
-            )
-            
+        full_message = " ".join(args)
+        question, memory = await self._handle_memory(message, full_message)
+        
         await message.channel.typing()
         
         try:
@@ -1456,3 +1457,11 @@ class UserCommands:
                 await self.bot.bot_send(message.channel, content=help_content)
             else:
                 await self.bot.bot_send(message.channel, content=f"❌ Command `{cmd_name}` not found.")
+                
+    self.command_help_texts = {
+        "ask": "Usage: {0}ask <question> OR @mention with question (works with user ID too)\nAsk Luma AI any question.",
+        "!ask": "Same as {0}ask - responds to <@{1}> mentions too".format(
+            "{0}", 
+            self.bot.client.user.id
+        )
+    }
