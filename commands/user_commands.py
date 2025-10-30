@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 from utils.helpers import format_alt_name, format_alts_grid, is_valid_ip, is_valid_ipv4, is_valid_ipv6
 from utils.constants import COUNTRY_FLAGS
+import pathlib
 
 
 class UserCommands:
@@ -569,7 +570,7 @@ class UserCommands:
             location_names = self.bot.steam_location_handler.get_location_names(country_code, state_code, city_id)
             location_parts = [name for name in [location_names.get("city"), location_names.get("state"), location_names.get("country")] if name]
             if location_parts:
-                flag = COUNTRY_FLAGS.get(country_code, "🌍")
+                flag = COUNTRY_FLAGS.get(country_code, "🌐")
                 embed.add_field(name=f"{flag} Location", value=", ".join(location_parts), inline=True)
             else:
                  embed.add_field(name="🌍 Country", value=country_code, inline=True)
@@ -1259,7 +1260,8 @@ class UserCommands:
         
         try:
             # Read system prompt
-            with open("/home/liforra/projects/liforrabot/system.md", "r") as f:
+            system_path = pathlib.Path(__file__).parent.parent / "system.md"
+            with open(system_path, "r") as f:
                 system_prompt = f.read()
                 
             from groq import Groq
