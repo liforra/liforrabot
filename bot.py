@@ -735,7 +735,7 @@ def register_slash_commands(tree, bot: "Bot"):
                 try:
                     last_seen_dt = datetime.fromisoformat(last_seen_str.replace("Z", "+00:00"))
                     last_seen_ts = int(last_seen_dt.timestamp())
-                    embed.add_field(name="👁️ Last Seen", value=f"<t:{last_seen_ts}:R>", inline=False)
+                    embed.add_field(name="👁️ Last Seen", value=f"<t:{last_seen_ts}:R>")
                 except: pass
             
             history = sorted(data["history"], key=lambda x: x.get("id", 0))

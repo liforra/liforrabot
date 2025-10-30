@@ -4,19 +4,136 @@ import discord
 import httpx
 import asyncio
 import re
+import json
 import traceback
-import random
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 from pathlib import Path
 from utils.helpers import format_alt_name, format_alts_grid, is_valid_ip, is_valid_ipv4, is_valid_ipv6
 from utils.constants import COUNTRY_FLAGS
-import pathlib
 
 
 class UserCommands:
     def __init__(self, bot):
         self.bot = bot
+        
+    async def _handle_memory(self, message: discord.Message, content: str) -> tuple:
+        """Handles memory storage and retrieval."""
+        memory_path = Path(__file__).parent.parent / "memory.json"
+        
+        # Initialize memory file if needed
+        if not memory_path.exists():
+            with open(memory_path, "w") as f:
+                json.dump({"remembered_items": {}}, f)
+        
+        # Load memory
+        with open(memory_path, "r") as f:
+            memory = json.load(f)
+        
+        # Check for remember command
+        if "!remember" in content:
+            parts = content.split("!remember")
+            question = parts[0].strip()
+            remember_content = parts[1].strip()
+            
+            if remember_content:
+                memory["remembered_items"][str(message.author.id)] = remember_content
+                with open(memory_path, "w") as f:
+                    json.dump(memory, f)
+            return question, memory
+        return content, memory
+
+    async def command_ask(self, message: discord.Message, args: List[str]):
+        """Ask Luma AI a question with memory and context."""
+        # Handle memory and extract question
+        full_message = " ".join(args)
+        question, memory = await self._handle_memory(message, full_message)
+        
+        # Check if triggered by mention or command
+        is_mentioned = self.bot.client.user in message.mentions
+        is_command = message.content.startswith(
+            self.bot.config.get_prefix(message.guild.id if message.guild else None)
+        )
+        
+        if not (is_mentioned or is_command or message.reference):
+            return
+            
+        if not question and not message.mentions and not message.reference:
+            return await self.bot.bot_send(
+                message.channel,
+                content="Please provide a question after mentioning me."
+            )
+            
+        await message.channel.typing()
+        
+        try:
+            # Read and prepare system prompt
+            system_path = Path(__file__).parent.parent / "system.md"
+            with open(system_path, "r") as f:
+                system_prompt = f.read()
+                
+            # Replace variables
+            system_prompt = system_prompt\
+                .replace("$(model)", "openai/gpt-oss-20b")\
+                .replace("$(temperature)", "1")
+                
+            # Build full context
+            context = f"ID: {message.author.id}\nName: {message.author.display_name}\n"
+            
+            # Add memory if exists
+            if str(message.author.id) in memory["remembered_items"]:
+                context += f"Remembered: {memory['remembered_items'][str(message.author.id)]}\n"
+            
+            # Add replied message if exists
+            if message.reference:
+                replied_msg = await message.channel.fetch_message(message.reference.message_id)
+                context += f"Message Replied to this Message: {replied_msg.content}\n"
+            
+            # Add recent messages (last 30 non-bot messages)
+            context += "Conversation History:\n"
+            message_count = 0
+            async for msg in message.channel.history(limit=100, before=message.created_at):
+                # Skip bot messages and messages older than 2 hours
+                if (message.created_at - msg.created_at).total_seconds() > 7200 or \
+                   msg.author.bot or msg.content.startswith(self.bot.config.get_prefix(msg.guild.id if msg.guild else None)):
+                    continue
+                
+                context += f"{msg.author.display_name}: {msg.content}\n"
+                message_count += 1
+                if message_count >= 30:
+                    break
+            
+            context += f"\nCurrent Message: {question}"
+            
+            from groq import Groq
+            client = Groq(api_key=self.bot.config.groq_api_key)
+            
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": context}
+            ]
+            
+            completion = client.chat.completions.create(
+                model="openai/gpt-oss-20b",
+                messages=messages,
+                temperature=1,
+                max_tokens=8192,
+                top_p=1,
+                reasoning_effort="medium",
+                stream=False
+            )
+            
+            response = completion.choices[0].message.content
+            await self.bot.bot_send(
+                message.channel,
+                content=response
+            )
+            
+        except Exception as e:
+            await self.bot.bot_send(
+                message.channel,
+                content=f"❌ Error generating response: {str(e)}"
+            )
 
     async def command_trump(self, message: discord.Message, args: List[str]):
         """Fetches a random Trump quote."""
@@ -1240,7 +1357,15 @@ class UserCommands:
         await self.bot.bot_send(message.channel, embed=embed)
 
     async def command_ask(self, message: discord.Message, args: List[str]):
-        """Ask Luma AI a question with context."""
+        """Ask Luma AI a question with memory capabilities."""
+        full_message = " ".join(args)
+        question, memory = await self._handle_memory(message, full_message)
+        
+        # Build context with memory
+        context = f"ID: {message.author.id}\nName: {message.author.display_name}\n"
+        if str(message.author.id) in memory["remembered_items"]:
+            context += f"Remembered: {memory['remembered_items'][str(message.author.id)]}\n"
+        
         # Check if triggered by mention or command
         is_mentioned = self.bot.client.user in message.mentions
         is_command = message.content.startswith(self.bot.config.get_prefix(message.guild.id if message.guild else None))
@@ -1248,41 +1373,39 @@ class UserCommands:
         if not (is_mentioned or is_command):
             return
             
-        # Get question text
-        prefix = self.bot.config.get_prefix(message.guild.id if message.guild else None)
-        question = " ".join(args) if is_command else \
-            message.content.replace(f"<@{self.bot.client.user.id}>", "").strip()
-        
-        if not question and not message.reference:
-            return await self.bot.bot_send(
-                message.channel,
-                content="Please provide a question after mentioning me."
-            )
-            
         await message.channel.typing()
         
         try:
-            # Read system prompt
+            # Read and prepare system prompt
             system_path = Path(__file__).parent.parent / "system.md"
             with open(system_path, "r") as f:
                 system_prompt = f.read()
                 
-            # Build context
-            context = f"ID: {message.author.id}\nName: {message.author.display_name}\n"
-            
+            # Replace variables
+            system_prompt = system_prompt\
+                .replace("$(model)", "openai/gpt-oss-20b")\
+                .replace("$(temperature)", "1")
+                
             # Add replied message if exists
             if message.reference:
                 replied_msg = await message.channel.fetch_message(message.reference.message_id)
                 context += f"Message Replied to this Message: {replied_msg.content}\n"
             
-            # Add recent messages (last 10 minutes)
-            context += "Recent Messages:\n"
-            async for msg in message.channel.history(limit=20, before=message.created_at):
-                if (message.created_at - msg.created_at).total_seconds() > 600:  # 10 minutes
-                    break
+            # Add recent messages (last 30 non-bot messages)
+            context += "Conversation History:\n"
+            message_count = 0
+            async for msg in message.channel.history(limit=100, before=message.created_at):
+                # Skip bot messages and messages older than 2 hours
+                if (message.created_at - msg.created_at).total_seconds() > 7200 or \
+                   msg.author.bot or msg.content.startswith(self.bot.config.get_prefix(msg.guild.id if msg.guild else None)):
+                    continue
+                
                 context += f"{msg.author.display_name}: {msg.content}\n"
+                message_count += 1
+                if message_count >= 30:
+                    break
             
-            context += f"\nMessage: {question}"
+            context += f"\nCurrent Message: {question}"
             
             from groq import Groq
             client = Groq(api_key=self.bot.config.groq_api_key)
