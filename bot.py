@@ -1139,8 +1139,13 @@ class Bot:
             "statsclear": self.admin_commands_handler.command_statsclear,
         }
 
-        self.command_help_texts = {}
-
+        self.command_help_texts = {
+            "ip": "Usage: {0}ip <info|db> [args]\n• `{0}ip info <ip>` - Live IP lookup\n• `{0}ip db <info|list|search|stats>` - Database operations",
+            "alts": "Usage: {0}alts <username> or subcommands\n• `{0}alts <username>` - Lookup alts\n• `{0}alts stats` - Show statistics\n• `{0}alts list [page]` - List all alts",
+            "ask": "Usage: {0}ask <question> or @mention with question\nAsk Luma AI any question and get an intelligent response.",
+            "!ask": "Same as `{0}ask` - Ask Luma AI any question"
+        }
+        
         self.client.event(self.on_ready)
         self.client.event(self.on_message)
         self.client.event(self.on_message_edit)

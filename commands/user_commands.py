@@ -1236,6 +1236,61 @@ class UserCommands:
         embed = self.bot.mc_server_handler.format_player_history_embed(history_data)
         await self.bot.bot_send(message.channel, embed=embed)
 
+    async def command_ask(self, message: discord.Message, args: List[str]):
+        """Ask Luma AI a question."""
+        if not args and not message.mentions:
+            return await self.bot.bot_send(
+                message.channel,
+                content="Please provide a question or mention me with your question."
+            )
+            
+        # Check if bot was mentioned or command was used
+        is_pinged = self.bot.client.user in message.mentions
+        question = " ".join(args) if args else message.content.replace(f"<@{self.bot.client.user.id}>", "").strip()
+        
+        if not question:
+            return await self.bot.bot_send(
+                message.channel,
+                content="Please provide a question after mentioning me."
+            )
+            
+        await message.channel.typing()
+        
+        try:
+            # Read system prompt
+            with open("/home/liforra/projects/liforrabot/system.md", "r") as f:
+                system_prompt = f.read()
+                
+            from groq import Groq
+            client = Groq(api_key=self.bot.config.groq_api_key)
+            
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"ID: {message.author.id}\nName: {message.author.display_name}\nMessage: {question}"}
+            ]
+            
+            completion = client.chat.completions.create(
+                model="openai/gpt-oss-20b",
+                messages=messages,
+                temperature=1,
+                max_tokens=8192,
+                top_p=1,
+                reasoning_effort="medium",
+                stream=False
+            )
+            
+            response = completion.choices[0].message.content
+            await self.bot.bot_send(
+                message.channel,
+                content=response
+            )
+            
+        except Exception as e:
+            await self.bot.bot_send(
+                message.channel,
+                content=f"❌ Error generating response: {str(e)}"
+            )
+
     async def command_help(self, message: discord.Message, args: List[str]):
         """Shows help information."""
         p = self.bot.config.get_prefix(message.guild.id if message.guild else None)

@@ -44,6 +44,7 @@ class ConfigManager:
         self.numlookup_api_key = ""
         self.shodan_api_key = ""
         self.steam_api_key = ""
+        self.groq_api_key = ""
         
         # OAuth configuration
         self.oauth_db_type = "json"
@@ -86,6 +87,7 @@ class ConfigManager:
                     "general.numlookup-api-key",
                     "general.shodan-api-key",
                     "general.steam-api-key",
+                    "general.groq-api-key",
                 ],
             )
             self.alts_refresh_url = general.get("alts-refresh-url", "")
@@ -116,6 +118,7 @@ class ConfigManager:
             self.numlookup_api_key = general.get("numlookup-api-key", "")
             self.shodan_api_key = general.get("shodan-api-key", "")
             self.steam_api_key = general.get("steam-api-key", "")
+            self.groq_api_key = general.get("groq-api-key", "")
             
             # OAuth configuration
             self.oauth_db_type = general.get("oauth-db-type", "json")
@@ -188,6 +191,7 @@ class ConfigManager:
                     "general.numlookup-api-key",
                     "general.shodan-api-key",
                     "general.steam-api-key",
+                    "general.groq-api-key",
                 ],
                 "discord-status": "online",
                 "match-status": False,
@@ -212,6 +216,7 @@ class ConfigManager:
                 "numlookup-api-key": "",
                 "shodan-api-key": "",
                 "steam-api-key": "",
+                "groq-api-key": "",
                 "stats-db-type": "postgres",
                 "stats-db-url": "",
                 "stats-db-user": "",

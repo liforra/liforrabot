@@ -9,3 +9,4 @@ cryptography>=41.0.0
 toml>=0.10.2
 psycopg2-binary
 pg8000
+groq
