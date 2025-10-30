@@ -16,6 +16,18 @@ from utils.constants import COUNTRY_FLAGS
 class UserCommands:
     def __init__(self, bot):
         self.bot = bot
+        self.command_help_texts = {}
+        
+        # Initialize help texts after client is ready
+        if hasattr(bot, 'client') and hasattr(bot.client, 'user') and bot.client.user:
+            self._initialize_help_texts()
+    
+    def _initialize_help_texts(self):
+        """Initialize command help texts after client is ready."""
+        self.command_help_texts = {
+            "ask": f"Usage: {{0}}ask <question> OR @mention with question (works with user ID too)\nAsk Luma AI any question.",
+            "!ask": f"Same as {{0}}ask - responds to <@{self.bot.client.user.id}> mentions too"
+        }
         
     async def _handle_memory(self, message: discord.Message, content: str) -> tuple:
         """Handles memory storage and retrieval."""
@@ -44,30 +56,39 @@ class UserCommands:
         return content, memory
 
     async def command_ask(self, message: discord.Message, args: List[str]):
-        """Handle asks and pings without system prompt changes."""
-        bot_id = str(self.bot.client.user.id)
-        
-        # Check all ping formats without affecting system prompt
-        is_pinged = (
-            self.bot.client.user in message.mentions or
-            f"<@{bot_id}>" in message.content or
-            f"<@!{bot_id}>" in message.content
-        )
-        
-        # Check command prefix
-        is_command = message.content.startswith(
-            self.bot.config.get_prefix(message.guild.id if message.guild else None)
-        )
-        
-        if not (is_pinged or is_command or message.reference):
-            return
-            
-        full_message = " ".join(args)
-        question, memory = await self._handle_memory(message, full_message)
-        
-        await message.channel.typing()
-        
+        """Handle asks and pings with proper error handling."""
         try:
+            if not hasattr(self.bot, 'client') or not hasattr(self.bot.client, 'user') or not self.bot.client.user:
+                print("ERROR: Bot client not properly initialized")
+                return
+
+            bot_id = str(self.bot.client.user.id)
+            print(f"DEBUG - Bot ID: {bot_id}")
+            print(f"DEBUG - Message content: {message.content}")
+            print(f"DEBUG - Mentions: {message.mentions}")
+            
+            # Check all ping formats
+            is_pinged = (
+                self.bot.client.user in message.mentions or
+                f"<@{bot_id}>" in message.content or
+                f"<@!{bot_id}>" in message.content
+            )
+            
+            # Check command prefix
+            prefix = self.bot.config.get_prefix(message.guild.id if message.guild else None)
+            is_command = message.content.startswith(prefix) if prefix else False
+            
+            print(f"DEBUG - is_pinged: {is_pinged}, is_command: {is_command}, has_reference: {bool(message.reference)}")
+            
+            if not (is_pinged or is_command or message.reference):
+                print("DEBUG - No trigger condition met")
+                return
+                
+            full_message = " ".join(args)
+            question, memory = await self._handle_memory(message, full_message)
+            
+            await message.channel.typing()
+            
             # Read and prepare system prompt
             system_path = Path(__file__).parent.parent / "system.md"
             with open(system_path, "r") as f:
