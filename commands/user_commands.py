@@ -8,6 +8,7 @@ import traceback
 import random
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
+from pathlib import Path
 from utils.helpers import format_alt_name, format_alts_grid, is_valid_ip, is_valid_ipv4, is_valid_ipv6
 from utils.constants import COUNTRY_FLAGS
 import pathlib
@@ -759,7 +760,7 @@ class UserCommands:
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 401: await self.bot.bot_send(message.channel, "❌ Invalid NumLookupAPI key.")
             elif e.response.status_code == 429: await self.bot.bot_send(message.channel, "⏱️ API rate limit exceeded. Try again later.")
-            else: await self.bot.bot_send(message.channel, f"❌ API Error: {e.response.status_code}")
+            else: await self.bot.bot_send(message.channel, content=f"❌ API Error: {e.response.status_code}")
         except Exception as e:
             tb_str = ''.join(traceback.format_exception(type(e), e, e.__traceback__))
             error_message = f"❌ **An unexpected error occurred:**\n```py\n{tb_str[:1800]}\n```"
