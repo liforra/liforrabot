@@ -1319,9 +1319,10 @@ class Bot:
             await self.bot_send(message.channel, content=error_message)
 
     async def on_ready(self):
-        """Initialize help texts when bot is ready."""
+        """Initialize components when bot is ready."""
+        print(f"Logged in as {self.client.user} (ID: {self.client.user.id})")
         if hasattr(self, 'user_commands_handler'):
-            self.user_commands_handler._initialize_help_texts()
+            await self.user_commands_handler.update_help_texts()
 
     async def on_presence_update(self, before, after): pass
 
@@ -1381,10 +1382,6 @@ class Bot:
         new = after.content or ""
         if original == new: return
 
-        if after.id not in self.edit_history:
-            self.edit_history[after.id] = {"bot_msg": None, "all_edits": [], "original": original, "timestamp": datetime.now().isoformat()}
-        self.edit_history[after.id]["all_edits"].append(new)
-        
         if not ((abs(len(new) - len(original)) >= 3 or calculate_edit_percentage(original, new) >= 20) and not is_likely_typo(original, new)):
             return
 

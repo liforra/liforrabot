@@ -16,18 +16,18 @@ from utils.constants import COUNTRY_FLAGS
 class UserCommands:
     def __init__(self, bot):
         self.bot = bot
-        self.command_help_texts = {}
-        
-        # Initialize help texts after client is ready
-        if hasattr(bot, 'client') and hasattr(bot.client, 'user') and bot.client.user:
-            self._initialize_help_texts()
-    
-    def _initialize_help_texts(self):
-        """Initialize command help texts after client is ready."""
         self.command_help_texts = {
-            "ask": f"Usage: {{0}}ask <question> OR @mention with question (works with user ID too)\nAsk Luma AI any question.",
-            "!ask": f"Same as {{0}}ask - responds to <@{self.bot.client.user.id}> mentions too"
+            "ask": "Usage: {0}ask <question> OR @mention with question\nAsk Luma AI any question.",
+            "!ask": "Same as {0}ask - responds to mentions"
         }
+
+    async def update_help_texts(self):
+        """Refresh help text descriptions once the client is available."""
+        client_user = getattr(getattr(self.bot, "client", None), "user", None)
+        if client_user:
+            self.command_help_texts["!ask"] = (
+                f"Same as {{0}}ask - responds to <@{client_user.id}> mentions too"
+            )
         
     async def _handle_memory(self, message: discord.Message, content: str) -> tuple:
         """Handles memory storage and retrieval."""
@@ -59,13 +59,9 @@ class UserCommands:
         """Handle asks and pings with proper error handling."""
         try:
             if not hasattr(self.bot, 'client') or not hasattr(self.bot.client, 'user') or not self.bot.client.user:
-                print("ERROR: Bot client not properly initialized")
                 return
 
             bot_id = str(self.bot.client.user.id)
-            print(f"DEBUG - Bot ID: {bot_id}")
-            print(f"DEBUG - Message content: {message.content}")
-            print(f"DEBUG - Mentions: {message.mentions}")
             
             # Check all ping formats
             is_pinged = (
@@ -1480,9 +1476,6 @@ class UserCommands:
                 await self.bot.bot_send(message.channel, content=f"❌ Command `{cmd_name}` not found.")
                 
     self.command_help_texts = {
-        "ask": "Usage: {0}ask <question> OR @mention with question (works with user ID too)\nAsk Luma AI any question.",
-        "!ask": "Same as {0}ask - responds to <@{1}> mentions too".format(
-            "{0}", 
-            self.bot.client.user.id
-        )
+        "ask": "Usage: {0}ask <question> OR @mention with question\nAsk Luma AI any question.",
+        "!ask": "Same as {0}ask - responds to mentions"
     }
