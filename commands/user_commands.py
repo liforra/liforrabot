@@ -28,6 +28,14 @@ class UserCommands:
             self.command_help_texts["!ask"] = (
                 f"Same as {{0}}ask - responds to <@{client_user.id}> mentions too"
             )
+            if hasattr(self.bot, "command_help_texts"):
+                self.bot.command_help_texts["ask"] = (
+                    "Usage: {0}ask <question> or @mention with question\n"
+                    "Ask Luma AI any question and get an intelligent response."
+                )
+                self.bot.command_help_texts["!ask"] = (
+                    f"Same as {{0}}ask - responds to <@{client_user.id}> mentions too"
+                )
         
     async def _handle_memory(self, message: discord.Message, content: str) -> tuple:
         """Handles memory storage and retrieval."""
@@ -1470,12 +1478,7 @@ class UserCommands:
         else:
             cmd_name = args[0].lower()
             if cmd_name in self.bot.command_help_texts:
-                help_content = self.bot.command_help_texts[cmd_name].format(p=p) + "\n\n*liforra.de | Liforras Utility bot*"
+                help_content = self.bot.command_help_texts[cmd_name].format(p=p)
                 await self.bot.bot_send(message.channel, content=help_content)
             else:
                 await self.bot.bot_send(message.channel, content=f"❌ Command `{cmd_name}` not found.")
-                
-    self.command_help_texts = {
-        "ask": "Usage: {0}ask <question> OR @mention with question\nAsk Luma AI any question.",
-        "!ask": "Same as {0}ask - responds to mentions"
-    }
