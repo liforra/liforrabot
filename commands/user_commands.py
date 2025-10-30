@@ -834,7 +834,7 @@ class UserCommands:
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 401: await self.bot.bot_send(message.channel, "❌ Invalid Shodan API key.")
             elif e.response.status_code == 404: await self.bot.bot_send(message.channel, f"❌ No information available for `{ip}` in Shodan.")
-            else: await self.bot.bot_send(message.channel, f"❌ API Error: {e.response.status_code}")
+            else: await self.bot.bot_send(message.channel, content=f"❌ API Error: {e.response.status_code}")
         except Exception as e:
             tb_str = ''.join(traceback.format_exception(type(e), e, e.__traceback__))
             error_message = f"❌ **An unexpected error occurred:**\n```py\n{tb_str[:1800]}\n```"
@@ -1239,18 +1239,20 @@ class UserCommands:
         await self.bot.bot_send(message.channel, embed=embed)
 
     async def command_ask(self, message: discord.Message, args: List[str]):
-        """Ask Luma AI a question."""
-        if not args and not message.mentions:
-            return await self.bot.bot_send(
-                message.channel,
-                content="Please provide a question or mention me with your question."
-            )
-            
-        # Check if bot was mentioned or command was used
-        is_pinged = self.bot.client.user in message.mentions
-        question = " ".join(args) if args else message.content.replace(f"<@{self.bot.client.user.id}>", "").strip()
+        """Ask Luma AI a question with context."""
+        # Check if triggered by mention or command
+        is_mentioned = self.bot.client.user in message.mentions
+        is_command = message.content.startswith(self.bot.config.get_prefix(message.guild.id if message.guild else None))
         
-        if not question:
+        if not (is_mentioned or is_command):
+            return
+            
+        # Get question text
+        prefix = self.bot.config.get_prefix(message.guild.id if message.guild else None)
+        question = " ".join(args) if is_command else \
+            message.content.replace(f"<@{self.bot.client.user.id}>", "").strip()
+        
+        if not question and not message.reference:
             return await self.bot.bot_send(
                 message.channel,
                 content="Please provide a question after mentioning me."
@@ -1260,16 +1262,33 @@ class UserCommands:
         
         try:
             # Read system prompt
-            system_path = pathlib.Path(__file__).parent.parent / "system.md"
+            system_path = Path(__file__).parent.parent / "system.md"
             with open(system_path, "r") as f:
                 system_prompt = f.read()
                 
+            # Build context
+            context = f"ID: {message.author.id}\nName: {message.author.display_name}\n"
+            
+            # Add replied message if exists
+            if message.reference:
+                replied_msg = await message.channel.fetch_message(message.reference.message_id)
+                context += f"Message Replied to this Message: {replied_msg.content}\n"
+            
+            # Add recent messages (last 10 minutes)
+            context += "Recent Messages:\n"
+            async for msg in message.channel.history(limit=20, before=message.created_at):
+                if (message.created_at - msg.created_at).total_seconds() > 600:  # 10 minutes
+                    break
+                context += f"{msg.author.display_name}: {msg.content}\n"
+            
+            context += f"\nMessage: {question}"
+            
             from groq import Groq
             client = Groq(api_key=self.bot.config.groq_api_key)
             
             messages = [
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"ID: {message.author.id}\nName: {message.author.display_name}\nMessage: {question}"}
+                {"role": "user", "content": context}
             ]
             
             completion = client.chat.completions.create(
