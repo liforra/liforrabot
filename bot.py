@@ -187,58 +187,6 @@ def register_slash_commands(tree, bot: "Bot"):
                 r = await client.get(f"https://uselessfacts.jsph.pl/api/v2/facts/{fact_type}", params={"language": language}, timeout=10)
                 r.raise_for_status()
                 data = r.json()
-            
-            color, title, thumb = (0xFFD700, "📅 Today's Useless Fact", "https://i.imgur.com/3l85nlt.png") if fact_type == "today" else (0xFF6B35, "🤔 Random Useless Fact", "https://i.imgur.com/2VX8V5T.png")
-            embed = discord.Embed(title=title, description=data.get("text", "N/A."), color=color)
-            embed.set_thumbnail(url=thumb)
-            
-            if source := data.get("source"):
-                embed.add_field(name="📚 Source", value=f"[{source}]({data.get('source_url')})" if data.get('source_url') else source, inline=False)
-            
-            embed.set_footer(text=f"liforra.de | Liforras Utility bot | ID: {data.get('id', 'N/A')} | Lang: {language.upper()}")
-            await interaction.followup.send(embed=embed, ephemeral=_ephemeral)
-        except httpx.HTTPStatusError as e:
-            await interaction.followup.send(f"❌ API Error: {e.response.status_code}", ephemeral=_ephemeral)
-        except Exception as e:
-            await interaction.followup.send(f"❌ Error: {type(e).__name__}", ephemeral=_ephemeral)
-
-    @bot.app_commands.allowed_installs(guilds=True, users=True)
-    @bot.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
-    @tree.command(name="search", description="Search Google using SerpAPI")
-    @bot.app_commands.describe(
-        query="Your search query",
-        _language="The search region",
-        _ephemeral="Show the response only to you (default: False)"
-    )
-    @bot.app_commands.choices(_language=[
-        bot.app_commands.Choice(name=name, value=name) 
-        for name in ["Germany", "United States", "United Kingdom"]
-    ])
-    async def search_slash(interaction: discord.Interaction, query: str, _language: str = "Germany", _ephemeral: bool = False):
-        bot.log_command(interaction.user.id, str(interaction.user), "search", [query, _language], is_slash=True)
-        if not await bot.check_authorization(interaction.user.id):
-            await interaction.response.send_message(bot.oauth_handler.get_authorization_message(interaction.user.mention), ephemeral=True)
-            return
-        
-        is_allowed, wait_time = bot.check_rate_limit(interaction.user.id, "search", limit=5, window=60)
-        if not is_allowed:
-            await interaction.response.send_message(f"⏱️ Rate limit exceeded. Please wait {wait_time} seconds.", ephemeral=True)
-            return
-        
-        await interaction.response.defer(ephemeral=_ephemeral)
-        
-        if not bot.config.serpapi_key:
-            await interaction.followup.send("❌ SerpAPI key not configured.", ephemeral=_ephemeral)
-            return
-        
-        try:
-            region_settings = LANGUAGE_MAP.get(_language, LANGUAGE_MAP["Germany"])
-            params = { "q": query, "location": region_settings["location"], "hl": region_settings["hl"], "gl": region_settings["gl"], "google_domain": region_settings["google_domain"], "api_key": bot.config.serpapi_key }
-            
-            async with httpx.AsyncClient() as client:
-                response = await client.get("https://serpapi.com/search.json", params=params, timeout=20)
-                response.raise_for_status()
-                data = response.json()
 
             if data.get("error"):
                 await interaction.followup.send(f"❌ API Error: {data['error']}", ephemeral=_ephemeral)
@@ -1127,6 +1075,8 @@ class Bot:
             "search": self.user_commands_handler.command_mcsearch,
             "random": self.user_commands_handler.command_mcrandom,
             "playerhistory": self.user_commands_handler.command_mcplayers,
+            "ask": self.user_commands_handler.command_ask,
+            "!ask": self.user_commands_handler.command_ask
         }
         self.admin_commands = {
             "reload-config": self.admin_commands_handler.command_reload_config,
@@ -1368,12 +1318,140 @@ class Bot:
             error_message = f"❌ **An unexpected error occurred:**\n```py\n{tb_str[:1800]}\n```"
             await self.bot_send(message.channel, content=error_message)
 
-    async def handle_asteroide_response(self, message):
+    def load_notes(self):
+        if self.notes_file.exists():
+            try:
+                with open(self.notes_file, "r", encoding="utf-8") as f: 
+                    self.notes_data = json.load(f)
+            except Exception as e:
+                print(f"[{self.data_dir.name}] Error loading notes: {e}")
+                self.notes_data = {"public": {}, "private": {}}
+        else: 
+            self.notes_data = {"public": {}, "private": {}}
+
+    def save_notes(self):
         try:
-            if re.search(r"\S+ has \d+ alts:", message.content):
-                if parsed := self.alts_handler.parse_alts_response(message.content): 
-                    self.alts_handler.store_alts_data(parsed)
-        except Exception as e: print(f"[{self.client.user}] Error handling Asteroide response: {e}")
+            with open(self.notes_file, "w", encoding="utf-8") as f: 
+                json.dump(self.notes_data, f, indent=2, ensure_ascii=False)
+        except Exception as e: 
+            print(f"[{self.data_dir.name}] Error saving notes: {e}")
+
+    def load_user_tokens(self) -> Dict:
+        if not self.user_tokens_file.exists(): return {}
+        try:
+            with open(self.user_tokens_file, "r", encoding="utf-8") as f: return json.load(f)
+        except (json.JSONDecodeError, IOError): return {}
+
+    def save_user_tokens(self, tokens: Dict):
+        try:
+            with open(self.user_tokens_file, "w", encoding="utf-8") as f: json.dump(tokens, f, indent=4)
+        except IOError as e: print(f"[Token Storage] Error saving user tokens: {e}")
+
+    def censor_text(self, text: str, guild_id: Optional[int] = None) -> str:
+        if not text or not isinstance(text, str): return text or ""
+        allow_swears = self.config.get_guild_config(guild_id, "allow-swears", self.config.default_allow_swears)
+        allow_slurs = self.config.get_guild_config(guild_id, "allow-slurs", self.config.default_allow_slurs)
+        if not allow_slurs:
+            for slur in SLUR_WORDS: text = re.compile(re.escape(slur), re.IGNORECASE).sub("█" * len(slur), text)
+        if not allow_swears:
+            for swear in SWEAR_WORDS: text = re.compile(re.escape(swear), re.IGNORECASE).sub("*" * len(swear), text)
+        return text
+
+    async def bot_send(self, channel, content=None, files=None, embed=None):
+        censored_content = self.censor_text(content, channel.guild.id if hasattr(channel, "guild") and channel.guild else None) if content else ""
+        try:
+            if not censored_content and not files and not embed: return None
+            
+            kwargs = {"suppress_embeds": True}
+            if censored_content:
+                kwargs["content"] = censored_content
+            if files:
+                kwargs["files"] = files
+            if embed and self.token_type == "bot":
+                kwargs["embed"] = embed
+                kwargs.pop("suppress_embeds", None)
+            
+            sent_message = None
+            if censored_content:
+                for i, chunk in enumerate(split_message(censored_content)):
+                    current_kwargs = kwargs.copy()
+                    current_kwargs['content'] = chunk
+                    if i > 0: 
+                        current_kwargs.pop('files', None)
+                        current_kwargs.pop('embed', None)
+
+                    sent = await channel.send(**current_kwargs)
+                    if i == 0: sent_message = sent
+                return sent_message
+            else:
+                 return await channel.send(**kwargs)
+
+        except Exception as e:
+            if "Forbidden" in type(e).__name__: print(f"[{self.client.user}] Missing permissions in channel {channel.id}")
+            else: print(f"[{self.client.user}] Error sending message: {e}")
+        return None
+
+    async def cleanup_forward_cache(self):
+        await self.client.wait_until_ready()
+        while not self.client.is_closed():
+            await asyncio.sleep(3600)
+            cutoff = datetime.now() - timedelta(hours=24)
+            expired = [k for k, v in self.forward_cache.items() if v["timestamp"] < cutoff]
+            for k in expired: del self.forward_cache[k]
+            if expired: print(f"[{self.client.user}] Cleaned {len(expired)} old forward cache entries.")
+
+    async def cleanup_message_cache(self):
+        await self.client.wait_until_ready()
+        while not self.client.is_closed():
+            await asyncio.sleep(600)
+            now = datetime.now()
+            cutoff = now - timedelta(minutes=10)
+            msg_expired = [k for k, v in self.message_cache.items() if v["timestamp"] < cutoff]
+            for k in msg_expired: del self.message_cache[k]
+            if msg_expired: print(f"[{self.client.user}] Cleaned {len(msg_expired)} old message cache entries.")
+            
+            edit_expired = [k for k, v in self.edit_history.items() if now - datetime.fromisoformat(v.get("timestamp", now.isoformat())) > timedelta(minutes=10)]
+            for k in edit_expired: del self.edit_history[k]
+            if edit_expired: print(f"[{self.client.user}] Cleaned {len(edit_expired)} old edit history entries.")
+
+    async def auto_refresh_alts(self):
+        await self.client.wait_until_ready()
+        await asyncio.sleep(60)
+        while not self.client.is_closed():
+            if self.config.alts_refresh_url:
+                print(f"[{self.client.user}] Auto-refreshing alts database...")
+                try:
+                    success = await self.alts_handler.refresh_alts_data(self.config.alts_refresh_url, self.ip_handler)
+                    if not success: print(f"[{self.client.user}] Alts refresh failed.")
+                except Exception as e:
+                    print(f"[{self.client.user}] Error during auto-refresh: {e}")
+            await asyncio.sleep(60)
+
+    async def handle_command(self, message, command_name: str, args: list):
+        # Log the command
+        self.log_command(
+            message.author.id,
+            str(message.author),
+            command_name,
+            args,
+            is_slash=False
+        )
+        
+        if not await self.check_authorization(message.author.id):
+            if self.oauth_handler:
+                await self.bot_send(message.channel, self.oauth_handler.get_authorization_message(message.author.mention))
+            return
+        
+        try:
+            if command_name in self.user_commands:
+                await self.user_commands[command_name](message, args)
+            elif command_name in self.admin_commands and str(message.author.id) in self.config.admin_ids:
+                await self.admin_commands[command_name](message, args)
+        except Exception as e:
+            print(f"[{self.client.user}] Error in command '{command_name}': {e}")
+            tb_str = ''.join(traceback.format_exception(type(e), e, e.__traceback__))
+            error_message = f"❌ **An unexpected error occurred:**\n```py\n{tb_str[:1800]}\n```"
+            await self.bot_send(message.channel, content=error_message)
 
     async def on_ready(self):
         print(f"Logged in as {self.client.user} (ID: {self.client.user.id}) [Type: {self.token_type}]")
@@ -1443,6 +1521,13 @@ class Bot:
         parts = message.content[len(prefix):].split()
         if not parts: return
         await self.handle_command(message, parts[0].lower(), parts[1:])
+
+    async def handle_asteroide_response(self, message):
+        try:
+            if re.search(r"\S+ has \d+ alts:", message.content):
+                if parsed := self.alts_handler.parse_alts_response(message.content): 
+                    self.alts_handler.store_alts_data(parsed)
+        except Exception as e: print(f"[{self.client.user}] Error handling Asteroide response: {e}")
 
     async def on_message_edit(self, before, after):
         if after.author.id == self.client.user.id or not after.guild or after.author.bot: return
