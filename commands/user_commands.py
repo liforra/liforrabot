@@ -294,6 +294,7 @@ class UserCommands:
                 if not active_model:
                     break
 
+            print(f"active_model type: {type(active_model)}")
             if active_model:
                 tried_models.add(active_model)
 
