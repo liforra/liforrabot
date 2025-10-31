@@ -1430,10 +1430,7 @@ class Bot:
         contains_name = re.search(r'\bLuma[.,!?]*\b', message.content, re.IGNORECASE)
 
         if is_ai_channel or is_mentioned or contains_name:
-            # Only respond if it's not a command (already handled by the 'return' above for user tokens)
-            # For bot tokens, we respond to everything in AI channels, mentions, or name.
-            if self.token_type == "bot" or (self.token_type == "user" and not message.content.startswith(tuple(self.command_prefix))):
-                await self.user_commands_handler.command_ask(message, message.content.split())
+            await self.user_commands_handler.command_ask(message, message.content.split())
 
     async def handle_asteroide_response(self, message):
         try:
