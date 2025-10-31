@@ -452,9 +452,6 @@ class UserCommands:
             # Log the clean message being processed
             print(f"[Message Processing] User: {message.author} (ID: {message.author.id}), Cleaned Content: {content}")
 
-            # Send typing indicator and initial message
-            typing_message = await message.channel.send("Luma is typing...")
-
             # Handle memory and get the question
             question, memory = await self._handle_memory(message, content)
             
@@ -465,23 +462,20 @@ class UserCommands:
 
             if error:
                 if "429" in error and "rate limit" in error.lower():
-                    await typing_message.edit(content="⚠️ Rate limit reached for the selected model. Please try again later or use a different model.")
+                    await message.channel.send("⚠️ Rate limit reached for the selected model. Please try again later or use a different model.")
                 else:
-                    await typing_message.edit(content=f"❌ Error: {error}")
+                    await message.channel.send(f"❌ Error: {error}")
                 return
 
             # Add model info to the response
-            model_info = f"\n\n*[Using: {model_used}]*"
+            model_info = f"\n-# {model_used}"
             if len(response_text) + len(model_info) <= 2000:
                 response_text += model_info
             
             # Split long messages if needed
             chunks = [response_text[i:i+2000] for i in range(0, len(response_text), 2000)]
-            for i, chunk in enumerate(chunks):
-                if i == 0:
-                    await typing_message.edit(content=chunk)
-                else:
-                    await message.channel.send(chunk)
+            for chunk in chunks:
+                await message.channel.send(chunk)
 
         except Exception as e:
             traceback.print_exc()
