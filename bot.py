@@ -1143,12 +1143,6 @@ class Bot:
         self.client.event(self.on_message_delete)
         self.client.event(self.on_presence_update)
         self.client.event(self.on_error)
-
-    async def on_error(self, event, *args, **kwargs):
-        """Logs all errors."""
-        import traceback
-        tb_str = traceback.format_exc()
-        await self.log_handler.log_error(tb_str)
         self.client.event(self.on_error)
 
     async def on_error(self, event, *args, **kwargs):
@@ -1417,17 +1411,21 @@ class Bot:
                 message.content,
             )
 
-        ai_channels = self.admin_commands_handler._load_ai_channels()
-        if message.channel.id in ai_channels and not message.content.startswith(tuple(self.command_prefix)):
-            await self.user_commands_handler.command_ask(message, [])
-
-        if self.token_type != "user": return
+        if self.token_type != "user":
+            ai_channels = self.admin_commands_handler._load_ai_channels()
+            if message.channel.id in ai_channels and not message.content.startswith(tuple(self.command_prefix)):
+                await self.user_commands_handler.command_ask(message, message.content.split())
+            return
         
         gid = message.guild.id if message.guild else None
         if not self.config.get_guild_config(gid, "allow-commands", self.config.default_allow_commands, message.author.id, message.channel.id): return
 
         prefix = self.config.get_prefix(gid)
-        if not message.content.startswith(prefix): return
+        if not message.content.startswith(prefix):
+            ai_channels = self.admin_commands_handler._load_ai_channels()
+            if message.channel.id in ai_channels:
+                await self.user_commands_handler.command_ask(message, message.content.split())
+            return
         
         parts = message.content[len(prefix):].split()
         if not parts: return
