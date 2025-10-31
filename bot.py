@@ -1044,6 +1044,7 @@ class Bot:
             
             # Add file handler to root logger
             root_logger = logging.getLogger()
+            root_logger.setLevel(logging.DEBUG)
             root_logger.addHandler(file_handler)
             
             logger.info(f"Logging to file: {self.log_file}")
