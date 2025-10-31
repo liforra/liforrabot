@@ -3,8 +3,15 @@
 import toml
 import ast
 import json
+import logging
 from pathlib import Path
-from typing import Optional, Any
+from typing import Optional, Any, Dict, List, Union
+
+# Import logger from the main bot
+from bot import logger
+
+# Create a logger for this module
+logger = logger.getChild('config')
 
 
 class ConfigManager:

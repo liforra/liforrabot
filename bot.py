@@ -3,10 +3,14 @@
 import asyncio
 import re
 import json
-import logging
-import traceback
+import sys
 from pathlib import Path
-from typing import Dict, Optional, Union, List
+from typing import Dict, List, Optional, Union, Any
+from utils.colored_logger import setup_logger, logger as log
+
+# Setup logging
+logger = setup_logger('liforrabot')
+
 from datetime import datetime, timedelta, timezone
 from collections import defaultdict
 
@@ -1010,16 +1014,32 @@ def register_slash_commands(tree, bot: "Bot"):
 
 # =================================================================================
 # END OF SLASH COMMAND REGISTRATION
-# =================================================================================
 
 
 class Bot:
     def __init__(self, token: str, data_dir: Path, token_type: str = "bot"):
+        """Initialize the bot with token and data directory."""
+        logger.info(
+            "Initializing bot",
+            extra={
+                "token_type": token_type,
+                "data_dir": str(data_dir)
+            }
+        )
+        
         self.token = token
         self.data_dir = data_dir
-        self.data_dir.mkdir(parents=True, exist_ok=True)
         self.token_type = token_type
-
+        self.command_prefix = ["!", "?", "."]
+        
+        # Ensure data directory exists
+        try:
+            self.data_dir.mkdir(parents=True, exist_ok=True)
+            logger.debug(f"Data directory ready: {self.data_dir}")
+        except Exception as e:
+            logger.critical("Failed to initialize data directory", exc_info=True)
+            raise
+        
         self.notes_file = self.data_dir / "notes.json"
         self.log_file = self.data_dir / "bot.log"
         self.user_tokens_file = self.data_dir / "user-tokens.json"

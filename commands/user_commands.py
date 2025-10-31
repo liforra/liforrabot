@@ -10,8 +10,15 @@ from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 from pathlib import Path
 from types import SimpleNamespace
+
+# Import logger from the main bot
+from bot import logger
 from utils.helpers import format_alt_name, format_alts_grid, is_valid_ip, is_valid_ipv4, is_valid_ipv6
 from utils.constants import COUNTRY_FLAGS
+
+# Add a logger for this module
+logger = logger.getChild('user_commands')
+logger.info("User commands module initialized")
 
 
 class UserCommands:
@@ -168,14 +175,34 @@ class UserCommands:
     ) -> tuple[Optional[str], Optional[str], Optional[str]]:
         """Generate a response from Groq, handling context and model failover.
 
-        Returns (response_text, model_used, error_message)."""
-
+        Returns:
+            tuple: (response_text, model_used, error_message)
+        """
+        logger.debug("Generating Luma response...")
+        start_time = datetime.now()
+        
         author_display = (
             getattr(message.author, "display_name", None)
             or getattr(message.author, "global_name", None)
             or getattr(message.author, "name", None)
             or str(message.author)
         )
+        
+        # Log model usage with context
+        logger.info(
+            "Model request received",
+            extra={
+                "user_id": message.author.id,
+                "user_name": author_display,
+                "requested_model": requested_model or "default",
+                "message_length": len(question),
+                "channel_id": getattr(message.channel, "id", "DM"),
+                "guild_id": getattr(message.guild, "id", "DM"),
+            }
+        )
+        
+        if requested_model:
+            logger.debug(f"Using requested model: {requested_model}")
 
         system_path = Path(__file__).parent.parent / "system.md"
         with open(system_path, "r") as f:
@@ -357,19 +384,21 @@ class UserCommands:
             # Remove the bot mention if present
             content = re.sub(rf'<@!?{bot_id}>\s*', '', content).strip()
             
-            # Check if this is a command
+            # Remove command prefix and command name if present
             if content.startswith(tuple(self.bot.command_prefix)):
-                # Remove the command prefix
-                content = content[1:].strip()
-                # If there's a space after the prefix, remove the command name
-                if ' ' in content:
-                    content = content[content.find(' '):].strip()
-                else:
-                    content = ''
+                content = content[1:].strip()  # Remove prefix
+                # Remove command name (e.g., 'ask' or '!ask')
+                content = content.split(maxsplit=1)[1] if ' ' in content else ''
+
+            # Clean up any extra whitespace
+            content = ' '.join(content.split())
 
             if not content:
                 await message.channel.send("Please provide a question after the command or mention.")
                 return
+
+            # Log the clean message being processed
+            print(f"[Message Processing] User: {message.author} (ID: {message.author.id}), Cleaned Content: {content}")
 
             # Handle memory and get the question
             question, memory = await self._handle_memory(message, content)
