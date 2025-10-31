@@ -686,7 +686,47 @@ Match Status = {self.bot.config.match_status}
 
         await self.bot.bot_send(message.channel, content="\n".join(report))
 
-    async def command_qrlogin(self, message: discord.Message, args: List[str]):
+    def _load_log_channels(self) -> List[int]:
+        if not self.bot.log_handler.log_channels_file.exists():
+            return []
+        with open(self.bot.log_handler.log_channels_file, "r") as f:
+            return json.load(f)
+
+    def _save_log_channels(self, channels: List[int]):
+        with open(self.bot.log_handler.log_channels_file, "w") as f:
+            json.dump(channels, f)
+
+    async def command_set_log(self, message: discord.Message, args: List[str]):
+        """Sets a channel as a log channel."""
+        channel_id = None
+        if args and args[0].isdigit():
+            channel_id = int(args[0])
+        else:
+            channel_id = message.channel.id
+
+        log_channels = self._load_log_channels()
+        if channel_id not in log_channels:
+            log_channels.append(channel_id)
+            self._save_log_channels(log_channels)
+            await self.bot.bot_send(message.channel, content=f"✅ Channel <#{channel_id}> is now a log channel.")
+        else:
+            await self.bot.bot_send(message.channel, content=f"ℹ️ Channel <#{channel_id}> is already a log channel.")
+
+    async def command_unset_log(self, message: discord.Message, args: List[str]):
+        """Unsets a channel as a log channel."""
+        channel_id = None
+        if args and args[0].isdigit():
+            channel_id = int(args[0])
+        else:
+            channel_id = message.channel.id
+
+        log_channels = self._load_log_channels()
+        if channel_id in log_channels:
+            log_channels.remove(channel_id)
+            self._save_log_channels(log_channels)
+            await self.bot.bot_send(message.channel, content=f"✅ Channel <#{channel_id}> is no longer a log channel.")
+        else:
+            await self.bot.bot_send(message.channel, content=f"ℹ️ Channel <#{channel_id}> is not a log channel.")
         """Generates QR code for token collection."""
         target_channel = message.channel
         custom_message = "Scan to get logged into the bot\n**WARNING: THIS WILL SAVE YOUR DISCORD TOKEN**"

@@ -28,6 +28,7 @@ from config.config_manager import ConfigManager
 from handlers.alts_handler import AltsHandler
 from handlers.ip_handler import IPHandler
 from handlers.logging_handler import LoggingHandler
+from handlers.log_handler import LogHandler
 from handlers.oauth_handler import OAuthHandler
 from handlers.phone_handler import PhoneHandler
 from handlers.word_stats_handler import WordStatsHandler
@@ -1077,6 +1078,7 @@ class Bot:
         self.alts_handler = None
         self.ip_handler = IPHandler(data_dir)
         self.logging_handler = LoggingHandler(data_dir)
+        self.log_handler = LogHandler(self)
         self.oauth_handler = None
         self.phone_handler = None
         self.word_stats_handler = None
@@ -1122,6 +1124,8 @@ class Bot:
             "statsclear": self.admin_commands_handler.command_statsclear,
             "set-ai": self.admin_commands_handler.command_set_ai,
             "unset-ai": self.admin_commands_handler.command_unset_ai,
+            "set-log": self.admin_commands_handler.command_set_log,
+            "unset-log": self.admin_commands_handler.command_unset_log,
         }
 
         self.command_help_texts = {
@@ -1136,6 +1140,13 @@ class Bot:
         self.client.event(self.on_message_edit)
         self.client.event(self.on_message_delete)
         self.client.event(self.on_presence_update)
+        self.client.event(self.on_error)
+
+    async def on_error(self, event, *args, **kwargs):
+        """Logs all errors."""
+        import traceback
+        tb_str = traceback.format_exc()
+        await self.log_handler.log_error(tb_str)
 
         if self.token_type == "bot" and self.tree:
             register_slash_commands(self.tree, self)
@@ -1329,6 +1340,7 @@ class Bot:
             await asyncio.sleep(60)
 
     async def handle_command(self, message, command_name: str, args: list):
+        await self.log_handler.log_command(message)
         # Log the command
         self.log_command(
             message.author.id,
