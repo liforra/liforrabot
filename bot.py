@@ -1411,28 +1411,29 @@ class Bot:
                 message.content,
             )
 
-        # AI channel and mention/name check
+        # Command processing (for user tokens)
+        if self.token_type == "user":
+            gid = message.guild.id if message.guild else None
+            if self.config.get_guild_config(gid, "allow-commands", self.config.default_allow_commands, message.author.id, message.channel.id):
+                prefix = self.config.get_prefix(gid)
+                if message.content.startswith(prefix):
+                    parts = message.content[len(prefix):].split()
+                    if parts:
+                        await self.handle_command(message, parts[0].lower(), parts[1:])
+                        return # Command handled, stop further processing
+
+        # AI response logic
         ai_channels = self.admin_commands_handler._load_ai_channels()
         is_ai_channel = message.channel.id in ai_channels
-        is_mention = self.client.user in message.mentions
-        contains_name = "luma" in message.content.lower()
+        is_mentioned = self.client.user in message.mentions
+        # Use regex to find "Luma" as a whole word, case-insensitive, with optional punctuation
+        contains_name = re.search(r'\bLuma[.,!?]*\b', message.content, re.IGNORECASE)
 
-        if is_ai_channel and not message.content.startswith(tuple(self.command_prefix)):
-            await self.user_commands_handler.command_ask(message, [])
-        elif is_mention or contains_name:
-            await self.user_commands_handler.command_ask(message, [])
-
-        if self.token_type != "user": return
-        
-        gid = message.guild.id if message.guild else None
-        if not self.config.get_guild_config(gid, "allow-commands", self.config.default_allow_commands, message.author.id, message.channel.id): return
-
-        prefix = self.config.get_prefix(gid)
-        if not message.content.startswith(prefix): return
-        
-        parts = message.content[len(prefix):].split()
-        if not parts: return
-        await self.handle_command(message, parts[0].lower(), parts[1:])
+        if is_ai_channel or is_mentioned or contains_name:
+            # Only respond if it's not a command (already handled by the 'return' above for user tokens)
+            # For bot tokens, we respond to everything in AI channels, mentions, or name.
+            if self.token_type == "bot" or (self.token_type == "user" and not message.content.startswith(tuple(self.command_prefix))):
+                await self.user_commands_handler.command_ask(message, message.content.split())
 
     async def handle_asteroide_response(self, message):
         try:
