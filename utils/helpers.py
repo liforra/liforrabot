@@ -19,6 +19,8 @@ def sanitize_filename(filename: str) -> str:
 
 def split_message(text: str, max_length: int = 1900) -> List[str]:
     """Splits a string into chunks respecting lines and words."""
+    if text is None:
+        return []
     if len(text) <= max_length:
         return [text]
 

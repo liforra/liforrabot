@@ -1,4 +1,4 @@
-"""User-accessible commands."""
+"User-accessible commands."
 
 import discord
 import httpx
@@ -17,20 +17,10 @@ from bot import logger
 from utils.helpers import format_alt_name, format_alts_grid, is_valid_ip, is_valid_ipv4, is_valid_ipv6
 from utils.constants import COUNTRY_FLAGS
 
-from utils.colored_logger import setup_ai_logger
-
 # Add a logger for this module
 logger = logger.getChild('user_commands')
 logger.info("User commands module initialized")
-ai_logger = setup_ai_logger()
 
-
-REASONING_MODELS = {
-    "openai/gpt-oss-20b",
-    "openai/gpt-oss-120b",
-    "openai/gpt-oss-safeguard-20b",
-    "qwen/qwen3-32b",
-}
 
 class UserCommands:
     def __init__(self, bot):
@@ -199,7 +189,17 @@ class UserCommands:
         )
         
         # Log model usage with context
-        logger.info("Model request received")
+        logger.info(
+            "Model request received",
+            extra={
+                "user_id": message.author.id,
+                "user_name": author_display,
+                "requested_model": requested_model or "default",
+                "message_length": len(question),
+                "channel_id": getattr(message.channel, "id", "DM"),
+                "guild_id": getattr(message.guild, "id", "DM"),
+            }
+        )
         
         if requested_model:
             logger.debug(f"Using requested model: {requested_model}")
@@ -276,33 +276,19 @@ class UserCommands:
         model_used = None
         error_message = None
 
-        logger.debug(f"Initial active_model: {active_model}")
-
         while True:
-            logger.debug(f"Loop start: active_model={active_model}, tried_models={tried_models}")
-
-            if not active_model:
-                break
-
             if active_model in tried_models:
-                active_model = next(
+                fallback = next(
                     (m for m in models if m not in tried_models and not self._is_model_banned(m)),
                     None,
                 )
-                logger.debug(f"Fell back to: {active_model}")
-
-                if not active_model:
+                if fallback:
+                    active_model = fallback
+                else:
                     break
-
-            print(f"active_model type: {type(active_model)}")
-            if active_model:
-                tried_models.add(active_model)
-
-            logger.debug(f"Trying model: {active_model}")
+            tried_models.add(active_model)
 
             if self._is_model_banned(active_model):
-                logger.warning(f"Model {active_model} is banned, skipping")
-                active_model = None
                 continue
 
             system_prompt = (
@@ -317,25 +303,32 @@ class UserCommands:
             ]
 
             # Log the request in the format: <model-id>:<message of the user>
-            ai_logger.info(f"{active_model}:{question}")
+            logger.info(
+                f"{active_model}:{question}",
+                extra={
+                    "user_id": message.author.id,
+                    "user_name": author_display,
+                    "model": active_model,
+                    "is_fallback": active_model != requested_model
+                }
+            )
             
             try:
+                completion = client.chat.completions.create(
+                    model=active_model,
+                    messages=messages_payload,
+                    temperature=1,
                 max_tokens = active_model_obj.get("context_window", 8192)
                 if "max_completion_tokens" in active_model_obj:
                     max_tokens = min(max_tokens, active_model_obj["max_completion_tokens"])
 
-                params = {
-                    "model": active_model,
-                    "messages": messages_payload,
-                    "temperature": 1,
-                    "max_tokens": max_tokens,
-                    "top_p": 1,
-                    "stream": False,
-                }
-                if active_model in REASONING_MODELS:
-                    params["reasoning_effort"] = "medium"
-
-                completion = client.chat.completions.create(**params)
+                # The original search was for a 'params' dictionary, which is not used in the current code structure.
+                # The 'max_tokens' calculation is inserted here, and the 'max_tokens' argument in the create call is updated.
+                    max_tokens=max_tokens,
+                    top_p=1,
+                    reasoning_effort="medium",
+                    stream=False,
+                )
                 response_text = completion.choices[0].message.content
                 model_used = active_model
                 
@@ -470,7 +463,7 @@ class UserCommands:
                 return
 
             # Add model info to the response
-            model_info = f"\n-# {model_used}"
+            model_info = f"\n\n*[Using: {model_used}]*"
             if len(response_text) + len(model_info) <= 2000:
                 response_text += model_info
             
@@ -626,8 +619,7 @@ class UserCommands:
                 ] = note_data
             else:
                 self.bot.notes_data["public"].setdefault(
-                    str(message.guild.id) if message.guild else "dm", {}
-                )[note_name] = note_data
+                    str(message.guild.id) if message.guild else "dm", {})[note_name] = note_data
             self.bot.save_notes()
             await self.bot.bot_send(
                 message.channel, content=f"✅ Created {visibility} note '{note_name}'"
