@@ -292,8 +292,34 @@ class UserCommands:
 
         return response_text, model_used, error_message
 
+    async def command_models(self, message: discord.Message, args: List[str]):
+        """List available Groq models."""
+        force_refresh = args and args[0].lower() == "refresh"
+        try:
+            models = await self._get_models(force=force_refresh)
+            if not models:
+                await message.channel.send("❌ Failed to fetch models. Using default model.")
+                return
+
+            # Format the model list
+            model_list = "\n".join([
+                f"• `{model}" + (" (default)" if model == self.default_model else "") + "`"
+                for model in models
+            ])
+            
+            embed = discord.Embed(
+                title="Available Models",
+                description=f"Use `model:<id>` in your message or `/ask model: <id>` to select a model.\n\n{model_list}",
+                color=0x00ff00
+            )
+            
+            await message.channel.send(embed=embed)
+            
+        except Exception as e:
+            await message.channel.send(f"❌ Error fetching models: {str(e)}")
+
     async def command_ask(self, message: discord.Message, args: List[str]):
-        """Handle asks and pings with proper error handling."""
+        """Handle asks and pings with proper error handling and model switching."""
         try:
             if not hasattr(self.bot, 'client') or not hasattr(self.bot.client, 'user') or not self.bot.client.user:
                 return
@@ -302,53 +328,64 @@ class UserCommands:
             
             # Check all ping formats
             is_pinged = (
-                self.bot.client.user in message.mentions or
-                f"<@{bot_id}>" in message.content or
-                f"<@!{bot_id}>" in message.content
-            )
-            
-            # Check command prefix
-            prefix = self.bot.config.get_prefix(message.guild.id if message.guild else None)
-            is_command = message.content.startswith(prefix) if prefix else False
-            
-            print(f"DEBUG - is_pinged: {is_pinged}, is_command: {is_command}, has_reference: {bool(message.reference)}")
-            
-            if not (is_pinged or is_command or message.reference):
-                print("DEBUG - No trigger condition met")
-                return
-                
-            full_message = " ".join(args)
-            requested_model, cleaned_message = self._extract_model_directive(full_message)
-            question, memory = await self._handle_memory(message, cleaned_message)
-            if not question:
-                question = cleaned_message
-            
-            await message.channel.typing()
-            
-            response, model_used, error_message = await self._generate_luma_response(
-                message=message,
-                question=question,
-                memory=memory,
-                requested_model=requested_model,
+                f'<@{bot_id}>' in message.content or 
+                f'<@!{bot_id}>' in message.content or
+                message.reference and message.reference.message_id
             )
 
-            if response:
-                await self.bot.bot_send(
-                    message.channel,
-                    content=response
-                )
-            else:
-                error_text = error_message or "No available Groq models responded successfully."
-                await self.bot.bot_send(
-                    message.channel,
-                    content=f"❌ Error generating response: {error_text}"
-                )
+            # Only respond to pings or replies to the bot
+            if not is_pinged and not message.content.startswith(tuple(self.bot.command_prefix)):
+                return
+
+            # Get the raw content and extract model directive
+            raw_content = message.content
+            requested_model, content = self._extract_model_directive(raw_content)
             
-        except Exception as e:
-            await self.bot.bot_send(
-                message.channel,
-                content=f"❌ Error generating response: {str(e)}"
+            # Remove the bot mention if present
+            content = re.sub(rf'<@!?{bot_id}>\s*', '', content).strip()
+            
+            # Check if this is a command
+            if content.startswith(tuple(self.bot.command_prefix)):
+                # Remove the command prefix
+                content = content[1:].strip()
+                # If there's a space after the prefix, remove the command name
+                if ' ' in content:
+                    content = content[content.find(' '):].strip()
+                else:
+                    content = ''
+
+            if not content:
+                await message.channel.send("Please provide a question after the command or mention.")
+                return
+
+            # Handle memory and get the question
+            question, memory = await self._handle_memory(message, content)
+            
+            # Generate response with the selected model
+            response_text, model_used, error = await self._generate_luma_response(
+                message, question, memory, requested_model
             )
+
+            if error:
+                if "429" in error and "rate limit" in error.lower():
+                    await message.channel.send("⚠️ Rate limit reached for the selected model. Please try again later or use a different model.")
+                else:
+                    await message.channel.send(f"❌ Error: {error}")
+                return
+
+            # Add model info to the response
+            model_info = f"\n\n*[Using: {model_used}]*"
+            if len(response_text) + len(model_info) <= 2000:
+                response_text += model_info
+            
+            # Split long messages if needed
+            chunks = [response_text[i:i+2000] for i in range(0, len(response_text), 2000)]
+            for chunk in chunks:
+                await message.channel.send(chunk)
+
+        except Exception as e:
+            traceback.print_exc()
+            await message.channel.send(f"❌ An error occurred: {str(e)}")
 
     async def command_trump(self, message: discord.Message, args: List[str]):
         """Fetches a random Trump quote."""

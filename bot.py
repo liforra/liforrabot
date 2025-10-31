@@ -1076,7 +1076,9 @@ class Bot:
             "random": self.user_commands_handler.command_mcrandom,
             "playerhistory": self.user_commands_handler.command_mcplayers,
             "ask": self.user_commands_handler.command_ask,
-            "!ask": self.user_commands_handler.command_ask
+            "!ask": self.user_commands_handler.command_ask,
+            "models": self.user_commands_handler.command_models,
+            "!models": self.user_commands_handler.command_models
         }
         self.admin_commands = {
             "reload-config": self.admin_commands_handler.command_reload_config,
