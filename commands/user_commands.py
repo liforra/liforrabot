@@ -17,9 +17,12 @@ from bot import logger
 from utils.helpers import format_alt_name, format_alts_grid, is_valid_ip, is_valid_ipv4, is_valid_ipv6
 from utils.constants import COUNTRY_FLAGS
 
+from utils.colored_logger import setup_ai_logger
+
 # Add a logger for this module
 logger = logger.getChild('user_commands')
 logger.info("User commands module initialized")
+ai_logger = setup_ai_logger()
 
 
 class UserCommands:
@@ -190,17 +193,7 @@ class UserCommands:
         )
         
         # Log model usage with context
-        logger.info(
-            "Model request received",
-            extra={
-                "user_id": message.author.id,
-                "user_name": author_display,
-                "requested_model": requested_model or "default",
-                "message_length": len(question),
-                "channel_id": getattr(message.channel, "id", "DM"),
-                "guild_id": getattr(message.guild, "id", "DM"),
-            }
-        )
+        logger.info("Model request received")
         
         if requested_model:
             logger.debug(f"Using requested model: {requested_model}")
@@ -272,18 +265,21 @@ class UserCommands:
         error_message = None
 
         while True:
+            if not active_model:
+                break
+
             if active_model in tried_models:
-                fallback = next(
+                active_model = next(
                     (m for m in models if m not in tried_models and not self._is_model_banned(m)),
                     None,
                 )
-                if fallback:
-                    active_model = fallback
-                else:
+                if not active_model:
                     break
+
             tried_models.add(active_model)
 
             if self._is_model_banned(active_model):
+                active_model = None
                 continue
 
             system_prompt = (
@@ -298,7 +294,7 @@ class UserCommands:
             ]
 
             # Log the request in the format: <model-id>:<message of the user>
-            logger.info(f"{active_model}:{question}")
+            ai_logger.info(f"{active_model}:{question}")
             
             try:
                 completion = client.chat.completions.create(
@@ -428,6 +424,9 @@ class UserCommands:
             # Log the clean message being processed
             print(f"[Message Processing] User: {message.author} (ID: {message.author.id}), Cleaned Content: {content}")
 
+            # Send typing indicator and initial message
+            typing_message = await message.channel.send("Luma is typing...")
+
             # Handle memory and get the question
             question, memory = await self._handle_memory(message, content)
             
@@ -438,9 +437,9 @@ class UserCommands:
 
             if error:
                 if "429" in error and "rate limit" in error.lower():
-                    await message.channel.send("⚠️ Rate limit reached for the selected model. Please try again later or use a different model.")
+                    await typing_message.edit(content="⚠️ Rate limit reached for the selected model. Please try again later or use a different model.")
                 else:
-                    await message.channel.send(f"❌ Error: {error}")
+                    await typing_message.edit(content=f"❌ Error: {error}")
                 return
 
             # Add model info to the response
@@ -450,8 +449,11 @@ class UserCommands:
             
             # Split long messages if needed
             chunks = [response_text[i:i+2000] for i in range(0, len(response_text), 2000)]
-            for chunk in chunks:
-                await message.channel.send(chunk)
+            for i, chunk in enumerate(chunks):
+                if i == 0:
+                    await typing_message.edit(content=chunk)
+                else:
+                    await message.channel.send(chunk)
 
         except Exception as e:
             traceback.print_exc()

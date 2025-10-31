@@ -71,5 +71,25 @@ def setup_logger(name: str, log_level: int = logging.DEBUG, log_file: Optional[s
 
     return logger
 
+def setup_ai_logger() -> logging.Logger:
+    """Set up a dedicated logger for AI requests."""
+    logger = logging.getLogger('ai_requests')
+    logger.setLevel(logging.INFO)
+    
+    # Prevent adding multiple handlers if logger already configured
+    if logger.handlers:
+        return logger
+
+    # File handler
+    file_handler = logging.FileHandler('ai_requests.log', encoding='utf-8')
+    file_formatter = logging.Formatter(
+        '%(asctime)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    file_handler.setFormatter(file_formatter)
+    logger.addHandler(file_handler)
+
+    return logger
+
 # Create root logger
 logger = setup_logger('liforrabot')
