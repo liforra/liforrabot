@@ -329,6 +329,10 @@ class UserCommands:
                 request={"model": active_model, "messages": messages_payload},
                 response={},
             )
+            await self.bot.log_handler.log_api_request(
+                request={"model": active_model, "messages": messages_payload},
+                response={},
+            )
             try:
                 if active_model_obj:
                     max_tokens = min(
@@ -348,6 +352,10 @@ class UserCommands:
                 )
                 response_text = completion.choices[0].message.content
                 model_used = active_model
+                await self.bot.log_handler.log_api_request(
+                    request={},
+                    response=completion.dict(),
+                )
                 await self.bot.log_handler.log_api_request(
                     request={},
                     response=completion.dict(),

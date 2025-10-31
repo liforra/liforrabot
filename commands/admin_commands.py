@@ -9,6 +9,7 @@ import httpx
 import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
+from pathlib import Path
 from utils.helpers import (
     format_alt_name,
     format_alts_grid,
@@ -606,7 +607,7 @@ Match Status = {self.bot.config.match_status}
                 "✅ Scan complete. No usernames formatted as IP addresses were found.",
             )
 
-    async def command_alts_clean_spigey(self, message: discord.Message):
+    async def command_alts_clean_spigey(self, message: discord.Message, args: List[str]):
         """Special cleanup for Spigey impersonation data."""
         spigey_user = "Spigey"
         valid_ip = "193.32.248.162"
@@ -727,6 +728,8 @@ Match Status = {self.bot.config.match_status}
             await self.bot.bot_send(message.channel, content=f"✅ Channel <#{channel_id}> is no longer a log channel.")
         else:
             await self.bot.bot_send(message.channel, content=f"ℹ️ Channel <#{channel_id}> is not a log channel.")
+
+    async def command_qrlogin(self, message: discord.Message, args: List[str]):
         """Generates QR code for token collection."""
         target_channel = message.channel
         custom_message = "Scan to get logged into the bot\n**WARNING: THIS WILL SAVE YOUR DISCORD TOKEN**"

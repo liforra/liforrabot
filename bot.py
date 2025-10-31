@@ -29,6 +29,7 @@ from handlers.alts_handler import AltsHandler
 from handlers.ip_handler import IPHandler
 from handlers.logging_handler import LoggingHandler
 from handlers.log_handler import LogHandler
+from handlers.log_handler import LogHandler
 from handlers.oauth_handler import OAuthHandler
 from handlers.phone_handler import PhoneHandler
 from handlers.word_stats_handler import WordStatsHandler
@@ -1079,6 +1080,7 @@ class Bot:
         self.ip_handler = IPHandler(data_dir)
         self.logging_handler = LoggingHandler(data_dir)
         self.log_handler = LogHandler(self)
+        self.log_handler = LogHandler(self)
         self.oauth_handler = None
         self.phone_handler = None
         self.word_stats_handler = None
@@ -1140,6 +1142,13 @@ class Bot:
         self.client.event(self.on_message_edit)
         self.client.event(self.on_message_delete)
         self.client.event(self.on_presence_update)
+        self.client.event(self.on_error)
+
+    async def on_error(self, event, *args, **kwargs):
+        """Logs all errors."""
+        import traceback
+        tb_str = traceback.format_exc()
+        await self.log_handler.log_error(tb_str)
         self.client.event(self.on_error)
 
     async def on_error(self, event, *args, **kwargs):
