@@ -9,6 +9,7 @@ import traceback
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 from pathlib import Path
+from types import SimpleNamespace
 from utils.helpers import format_alt_name, format_alts_grid, is_valid_ip, is_valid_ipv4, is_valid_ipv6
 from utils.constants import COUNTRY_FLAGS
 
@@ -18,8 +19,18 @@ class UserCommands:
         self.bot = bot
         self.command_help_texts = {
             "ask": "Usage: {0}ask <question> OR @mention with question\nAsk Luma AI any question.",
-            "!ask": "Same as {0}ask - responds to mentions"
+            "!ask": "Same as {0}ask - responds to mentions",
+            "models": "Usage: {0}models [refresh]\nList available Groq models (use 'refresh' to fetch latest).",
+            "!models": "Same as {0}models - also responds to mentions"
         }
+        self.default_model = "openai/gpt-oss-20b"
+        self._model_cache = {
+            "models": [],
+            "fetched_at": datetime.min.replace(tzinfo=timezone.utc)
+        }
+        self._model_cache_ttl = timedelta(minutes=10)
+        self._model_banlist: Dict[str, datetime] = {}
+        self._model_ban_ttl = timedelta(hours=1)
 
     async def update_help_texts(self):
         """Refresh help text descriptions once the client is available."""
@@ -36,19 +47,31 @@ class UserCommands:
                 self.bot.command_help_texts["!ask"] = (
                     f"Same as {{0}}ask - responds to <@{client_user.id}> mentions too"
                 )
+                self.bot.command_help_texts["models"] = (
+                    "Usage: {0}models [refresh]\nList available Groq models (use 'refresh' to fetch latest)."
+                )
         
+    def _memory_path(self) -> Path:
+        return Path(__file__).parent.parent / "memory.json"
+
+    def _ensure_memory_file(self) -> None:
+        path = self._memory_path()
+        if not path.exists():
+            with open(path, "w") as f:
+                json.dump({"remembered_items": {}}, f)
+
+    def _load_memory(self) -> dict:
+        self._ensure_memory_file()
+        with open(self._memory_path(), "r") as f:
+            return json.load(f)
+
+    def _save_memory(self, memory: dict) -> None:
+        with open(self._memory_path(), "w") as f:
+            json.dump(memory, f)
+
     async def _handle_memory(self, message: discord.Message, content: str) -> tuple:
         """Handles memory storage and retrieval."""
-        memory_path = Path(__file__).parent.parent / "memory.json"
-        
-        # Initialize memory file if needed
-        if not memory_path.exists():
-            with open(memory_path, "w") as f:
-                json.dump({"remembered_items": {}}, f)
-        
-        # Load memory
-        with open(memory_path, "r") as f:
-            memory = json.load(f)
+        memory = self._load_memory()
         
         # Check for remember command
         if "!remember" in content:
@@ -58,10 +81,216 @@ class UserCommands:
             
             if remember_content:
                 memory["remembered_items"][str(message.author.id)] = remember_content
-                with open(memory_path, "w") as f:
-                    json.dump(memory, f)
+                self._save_memory(memory)
             return question, memory
         return content, memory
+
+    def _extract_model_directive(self, text: str) -> tuple[Optional[str], str]:
+        """Parse `model:<id>` directive and return (model_id, cleaned_text)."""
+        if not text:
+            return None, text
+        model_match = re.search(r"\bmodel:([A-Za-z0-9_.\-]+)", text, flags=re.IGNORECASE)
+        if not model_match:
+            return None, text.strip()
+        model_id = model_match.group(1)
+        cleaned = (text[:model_match.start()] + text[model_match.end():]).strip()
+        cleaned = re.sub(r"\s{2,}", " ", cleaned)
+        return model_id, cleaned
+
+    async def _get_models(self, force: bool = False) -> List[str]:
+        """Fetch available Groq models with caching."""
+        now = datetime.now(timezone.utc)
+        if (
+            not force
+            and self._model_cache["models"]
+            and now - self._model_cache["fetched_at"] < self._model_cache_ttl
+        ):
+            return self._model_cache["models"]
+
+        api_key = getattr(self.bot.config, "groq_api_key", None)
+        if not api_key:
+            return self._model_cache["models"]
+
+        try:
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            }
+            async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+                resp = await client.get("https://api.groq.com/openai/v1/models", headers=headers)
+                resp.raise_for_status()
+                payload = resp.json()
+        except Exception as exc:
+            print(f"[Groq] Failed to fetch models: {exc}")
+            return self._model_cache["models"]
+
+        models = sorted(
+            model.get("id")
+            for model in payload.get("data", [])
+            if isinstance(model, dict) and model.get("id")
+        )
+        self._model_cache = {
+            "models": models,
+            "fetched_at": now
+        }
+        return models
+
+    def _cleanup_model_bans(self) -> None:
+        now = datetime.now(timezone.utc)
+        expired = [model for model, until in self._model_banlist.items() if until <= now]
+        for model in expired:
+            del self._model_banlist[model]
+
+    def _is_model_banned(self, model_id: str) -> bool:
+        self._cleanup_model_bans()
+        expiry = self._model_banlist.get(model_id)
+        return bool(expiry and expiry > datetime.now(timezone.utc))
+
+    def _ban_model(self, model_id: str) -> None:
+        self._cleanup_model_bans()
+        self._model_banlist[model_id] = datetime.now(timezone.utc) + self._model_ban_ttl
+
+    def _resolve_model_id(self, requested: Optional[str], available: List[str]) -> Optional[str]:
+        if not requested:
+            return None
+        requested_lower = requested.lower()
+        for model in available:
+            if model.lower() == requested_lower:
+                return model
+        return requested
+
+    async def _generate_luma_response(
+        self,
+        message: discord.Message,
+        question: str,
+        memory: dict,
+        requested_model: Optional[str]
+    ) -> tuple[Optional[str], Optional[str], Optional[str]]:
+        """Generate a response from Groq, handling context and model failover.
+
+        Returns (response_text, model_used, error_message)."""
+
+        author_display = (
+            getattr(message.author, "display_name", None)
+            or getattr(message.author, "global_name", None)
+            or getattr(message.author, "name", None)
+            or str(message.author)
+        )
+
+        system_path = Path(__file__).parent.parent / "system.md"
+        with open(system_path, "r") as f:
+            system_prompt_template = f.read()
+
+        # Build context block
+        context_lines = [
+            f"ID: {message.author.id}",
+            f"Name: {author_display}",
+        ]
+
+        preferred_model = requested_model or self.default_model
+        context_lines.append(f"Model Preference: {preferred_model}")
+
+        remembered = memory.get("remembered_items", {})
+        if str(message.author.id) in remembered:
+            context_lines.append(f"Remembered: {remembered[str(message.author.id)]}")
+
+        if message.reference:
+            try:
+                replied_msg = await message.channel.fetch_message(message.reference.message_id)
+                context_lines.append(f"Message Replied to this Message: {replied_msg.content}")
+            except Exception as exc:
+                print(f"[Groq] Failed to fetch replied message: {exc}")
+
+        # Recent messages for additional context
+        context_lines.append("Conversation History:")
+        message_count = 0
+        async for msg in message.channel.history(limit=100, before=message.created_at):
+            if (message.created_at - msg.created_at).total_seconds() > 7200:
+                break
+            if msg.author.bot:
+                continue
+            prefix = self.bot.config.get_prefix(msg.guild.id if msg.guild else None)
+            if prefix and msg.content.startswith(prefix):
+                continue
+            author_name = (
+                getattr(msg.author, "display_name", None)
+                or getattr(msg.author, "global_name", None)
+                or getattr(msg.author, "name", None)
+                or str(msg.author)
+            )
+            context_lines.append(f"{msg.author.id}, {author_name}: {msg.content}")
+            message_count += 1
+            if message_count >= 30:
+                break
+
+        context_lines.append("")
+        context_lines.append(f"Current Message: {message.author.id}, {author_display}: {question}")
+
+        base_system_prompt = system_prompt_template
+        temperature = "1"
+
+        from groq import Groq
+        client = Groq(api_key=self.bot.config.groq_api_key)
+
+        models = await self._get_models()
+        if not models:
+            models = [self.default_model]
+
+        active_model = self._resolve_model_id(requested_model, models) or self.default_model
+
+        tried_models: set[str] = set()
+        response_text = None
+        model_used = None
+        error_message = None
+
+        while True:
+            if active_model in tried_models:
+                fallback = next(
+                    (m for m in models if m not in tried_models and not self._is_model_banned(m)),
+                    None,
+                )
+                if fallback:
+                    active_model = fallback
+                else:
+                    break
+            tried_models.add(active_model)
+
+            if self._is_model_banned(active_model):
+                continue
+
+            system_prompt = (
+                base_system_prompt
+                .replace("$(model)", active_model)
+                .replace("$(temperature)", temperature)
+            )
+
+            messages_payload = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": "\n".join(context_lines)}
+            ]
+
+            try:
+                completion = client.chat.completions.create(
+                    model=active_model,
+                    messages=messages_payload,
+                    temperature=1,
+                    max_tokens=8192,
+                    top_p=1,
+                    reasoning_effort="medium",
+                    stream=False,
+                )
+                response_text = completion.choices[0].message.content
+                model_used = active_model
+                break
+            except Exception as call_exc:
+                error_message = str(call_exc)
+                if "429" in error_message:
+                    self._ban_model(active_model)
+                    continue
+                else:
+                    break
+
+        return response_text, model_used, error_message
 
     async def command_ask(self, message: discord.Message, args: List[str]):
         """Handle asks and pings with proper error handling."""
@@ -89,71 +318,31 @@ class UserCommands:
                 return
                 
             full_message = " ".join(args)
-            question, memory = await self._handle_memory(message, full_message)
+            requested_model, cleaned_message = self._extract_model_directive(full_message)
+            question, memory = await self._handle_memory(message, cleaned_message)
+            if not question:
+                question = cleaned_message
             
             await message.channel.typing()
             
-            # Read and prepare system prompt
-            system_path = Path(__file__).parent.parent / "system.md"
-            with open(system_path, "r") as f:
-                system_prompt = f.read()
-                
-            # Replace variables
-            system_prompt = system_prompt\
-                .replace("$(model)", "openai/gpt-oss-20b")\
-                .replace("$(temperature)", "1")
-                
-            # Build full context
-            context = f"ID: {message.author.id}\nName: {message.author.display_name}\n"
-            
-            # Add memory if exists
-            if str(message.author.id) in memory["remembered_items"]:
-                context += f"Remembered: {memory['remembered_items'][str(message.author.id)]}\n"
-            
-            # Add replied message if exists
-            if message.reference:
-                replied_msg = await message.channel.fetch_message(message.reference.message_id)
-                context += f"Message Replied to this Message: {replied_msg.content}\n"
-            
-            # Add recent messages (last 30 non-bot messages)
-            context += "Conversation History:\n"
-            message_count = 0
-            async for msg in message.channel.history(limit=100, before=message.created_at):
-                # Skip bot messages and messages older than 2 hours
-                if (message.created_at - msg.created_at).total_seconds() > 7200 or \
-                   msg.author.bot or msg.content.startswith(self.bot.config.get_prefix(msg.guild.id if msg.guild else None)):
-                    continue
-                
-                context += f"{msg.author.display_name}: {msg.content}\n"
-                message_count += 1
-                if message_count >= 30:
-                    break
-            
-            context += f"\nCurrent Message: {question}"
-            
-            from groq import Groq
-            client = Groq(api_key=self.bot.config.groq_api_key)
-            
-            messages = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": context}
-            ]
-            
-            completion = client.chat.completions.create(
-                model="openai/gpt-oss-20b",
-                messages=messages,
-                temperature=1,
-                max_tokens=8192,
-                top_p=1,
-                reasoning_effort="medium",
-                stream=False
+            response, model_used, error_message = await self._generate_luma_response(
+                message=message,
+                question=question,
+                memory=memory,
+                requested_model=requested_model,
             )
-            
-            response = completion.choices[0].message.content
-            await self.bot.bot_send(
-                message.channel,
-                content=response
-            )
+
+            if response:
+                await self.bot.bot_send(
+                    message.channel,
+                    content=response
+                )
+            else:
+                error_text = error_message or "No available Groq models responded successfully."
+                await self.bot.bot_send(
+                    message.channel,
+                    content=f"❌ Error generating response: {error_text}"
+                )
             
         except Exception as e:
             await self.bot.bot_send(
