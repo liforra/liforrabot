@@ -294,7 +294,8 @@ class UserCommands:
                 if not active_model:
                     break
 
-            tried_models.add(active_model)
+            if active_model:
+                tried_models.add(active_model)
 
             logger.debug(f"Trying model: {active_model}")
 
