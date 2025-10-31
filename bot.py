@@ -1362,6 +1362,11 @@ class Bot:
 
     async def on_message(self, message):
         if message.author.id == self.client.user.id: return
+        if message.guild and not message.guild.get_member(message.author.id):
+            try:
+                await message.guild.fetch_member(message.author.id)
+            except (discord.Forbidden, discord.HTTPException):
+                pass # Ignore if we can't fetch the member
         if message.author.bot:
             if str(message.author.id) == ASTEROIDE_BOT_ID and self.config.get_guild_config(message.guild.id if message.guild else None, "detect-ips", self.config.default_detect_ips):
                 await self.handle_asteroide_response(message)
