@@ -1036,12 +1036,28 @@ class Bot:
         try:
             self.data_dir.mkdir(parents=True, exist_ok=True)
             logger.debug(f"Data directory ready: {self.data_dir}")
+            
+            # Set up log file
+            self.log_file = self.data_dir / "bot.log"
+            file_handler = logging.FileHandler(self.log_file, encoding='utf-8')
+            file_formatter = logging.Formatter(
+                '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+                datefmt='%Y-%m-%d %H:%M:%S'
+            )
+            file_handler.setFormatter(file_formatter)
+            file_handler.setLevel(logging.DEBUG)
+            
+            # Add file handler to root logger
+            root_logger = logging.getLogger()
+            root_logger.addHandler(file_handler)
+            
+            logger.info(f"Logging to file: {self.log_file}")
+            
         except Exception as e:
             logger.critical("Failed to initialize data directory", exc_info=True)
             raise
         
         self.notes_file = self.data_dir / "notes.json"
-        self.log_file = self.data_dir / "bot.log"
         self.user_tokens_file = self.data_dir / "user-tokens.json"
 
         if token_type == "bot":

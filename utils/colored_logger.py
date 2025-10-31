@@ -24,9 +24,15 @@ class ColoredFormatter(logging.Formatter):
         if levelname in self.COLORS:
             levelname_color = self.COLOR_SEQ % (30 + self.COLORS[levelname]) + levelname + self.RESET_SEQ
             record.levelname = levelname_color
+            
+        # Handle extra parameters
+        if hasattr(record, 'extra') and record.extra:
+            extras = ' | ' + ' | '.join(f'{k}={v}' for k, v in record.extra.items())
+            record.msg = f"{record.msg}{extras}"
+            
         return logging.Formatter.format(self, record)
 
-def setup_logger(name: str, log_level: int = logging.INFO, log_file: Optional[str] = None) -> logging.Logger:
+def setup_logger(name: str, log_level: int = logging.DEBUG, log_file: Optional[str] = None) -> logging.Logger:
     """Set up a logger with colored output.
     
     Args:
