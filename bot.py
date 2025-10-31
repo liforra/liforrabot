@@ -1020,13 +1020,7 @@ def register_slash_commands(tree, bot: "Bot"):
 class Bot:
     def __init__(self, token: str, data_dir: Path, token_type: str = "bot"):
         """Initialize the bot with token and data directory."""
-        logger.info(
-            "Initializing bot",
-            extra={
-                "token_type": token_type,
-                "data_dir": str(data_dir)
-            }
-        )
+        logger.info("Initializing bot")
         
         self.token = token
         self.data_dir = data_dir
