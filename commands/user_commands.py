@@ -461,7 +461,7 @@ class UserCommands:
                 return
 
             # Add model info to the response
-            model_info = f"\n\n*[Using: {model_used}]*"
+            model_info = f"\n\n-# {model_used}"
             if len(response_text) + len(model_info) <= 2000:
                 response_text += model_info
             
