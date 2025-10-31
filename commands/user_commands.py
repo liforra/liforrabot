@@ -296,6 +296,17 @@ class UserCommands:
                 {"role": "user", "content": "\n".join(context_lines)}
             ]
 
+            # Log the request in the format: <model-id>:<message of the user>
+            logger.info(
+                f"{active_model}:{question}",
+                extra={
+                    "user_id": message.author.id,
+                    "user_name": author_display,
+                    "model": active_model,
+                    "is_fallback": active_model != requested_model
+                }
+            )
+            
             try:
                 completion = client.chat.completions.create(
                     model=active_model,
@@ -308,11 +319,35 @@ class UserCommands:
                 )
                 response_text = completion.choices[0].message.content
                 model_used = active_model
+                
+                # Log successful response
+                logger.debug(
+                    f"Response generated with {active_model}",
+                    extra={
+                        "user_id": message.author.id,
+                        "model": active_model,
+                        "response_length": len(response_text) if response_text else 0,
+                        "duration": (datetime.now() - start_time).total_seconds()
+                    }
+                )
                 break
+                
             except Exception as call_exc:
                 error_message = str(call_exc)
+                logger.error(
+                    f"Error with model {active_model}: {error_message}",
+                    extra={
+                        "user_id": message.author.id,
+                        "model": active_model,
+                        "error": error_message,
+                        "is_rate_limit": "429" in error_message
+                    },
+                    exc_info=True
+                )
+                
                 if "429" in error_message:
                     self._ban_model(active_model)
+                    logger.warning(f"Model {active_model} rate limited, banned for 1 hour")
                     continue
                 else:
                     break
