@@ -31,7 +31,7 @@ class UserCommands:
             "models": "Usage: {0}models [refresh]\nList available Groq models (use 'refresh' to fetch latest).",
             "!models": "Same as {0}models - also responds to mentions"
         }
-        self.default_model = "openai/gpt-oss-20b"
+        self.default_model = "groq/compound-mini"
         self._model_cache = {
             "models": [],
             "fetched_at": datetime.min.replace(tzinfo=timezone.utc)
@@ -247,7 +247,7 @@ class UserCommands:
             )
             context_lines.append(f"{msg.author.id}, {author_name}: {msg.content}")
             message_count += 1
-            if message_count >= 30:
+            if message_count >= 15:
                 break
 
         context_lines.append("")
@@ -263,7 +263,12 @@ class UserCommands:
         if not models:
             models = [self.default_model]
 
-        active_model_obj = self._resolve_model_id(requested_model, models)
+        if not requested_model:
+            models.sort(key=lambda x: x.get("context_window", 0), reverse=True)
+            active_model_obj = models[0] if models else None
+        else:
+            active_model_obj = self._resolve_model_id(requested_model, models)
+
         if not active_model_obj:
             active_model_obj = next((m for m in models if m.get("id") == self.default_model), None)
         if not active_model_obj:
