@@ -21,6 +21,49 @@ from handlers.qr_login import DiscordQRLogin
 class AdminCommands:
     def __init__(self, bot):
         self.bot = bot
+        self.ai_channels_file = Path(__file__).parent.parent / "config" / "ai_channels.json"
+
+    def _load_ai_channels(self) -> List[int]:
+        if not self.ai_channels_file.exists():
+            return []
+        with open(self.ai_channels_file, "r") as f:
+            return json.load(f)
+
+    def _save_ai_channels(self, channels: List[int]):
+        with open(self.ai_channels_file, "w") as f:
+            json.dump(channels, f)
+
+    async def command_set_ai(self, message: discord.Message, args: List[str]):
+        """Sets a channel to be an AI channel."""
+        channel_id = None
+        if args and args[0].isdigit():
+            channel_id = int(args[0])
+        else:
+            channel_id = message.channel.id
+
+        ai_channels = self._load_ai_channels()
+        if channel_id not in ai_channels:
+            ai_channels.append(channel_id)
+            self._save_ai_channels(ai_channels)
+            await self.bot.bot_send(message.channel, content=f"✅ Channel <#{channel_id}> is now an AI channel.")
+        else:
+            await self.bot.bot_send(message.channel, content=f"ℹ️ Channel <#{channel_id}> is already an AI channel.")
+
+    async def command_unset_ai(self, message: discord.Message, args: List[str]):
+        """Unsets a channel as an AI channel."""
+        channel_id = None
+        if args and args[0].isdigit():
+            channel_id = int(args[0])
+        else:
+            channel_id = message.channel.id
+
+        ai_channels = self._load_ai_channels()
+        if channel_id in ai_channels:
+            ai_channels.remove(channel_id)
+            self._save_ai_channels(ai_channels)
+            await self.bot.bot_send(message.channel, content=f"✅ Channel <#{channel_id}> is no longer an AI channel.")
+        else:
+            await self.bot.bot_send(message.channel, content=f"ℹ️ Channel <#{channel_id}> is not an AI channel.")
 
     async def command_reload_config(self, message: discord.Message, args: List[str]):
         """Reloads all configuration files."""

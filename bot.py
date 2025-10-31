@@ -1120,6 +1120,8 @@ class Bot:
             "qrlogin": self.admin_commands_handler.command_qrlogin,
             "backfill": self.admin_commands_handler.command_backfill,
             "statsclear": self.admin_commands_handler.command_statsclear,
+            "set-ai": self.admin_commands_handler.command_set_ai,
+            "unset-ai": self.admin_commands_handler.command_unset_ai,
         }
 
         self.command_help_texts = {
@@ -1393,6 +1395,10 @@ class Bot:
                 message.author.id,
                 message.content,
             )
+
+        ai_channels = self.admin_commands_handler._load_ai_channels()
+        if message.channel.id in ai_channels and not message.content.startswith(tuple(self.command_prefix)):
+            await self.user_commands_handler.command_ask(message, [])
 
         if self.token_type != "user": return
         
