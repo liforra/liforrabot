@@ -307,16 +307,29 @@ class UserCommands:
                 for model in models
             ])
             
-            embed = discord.Embed(
-                title="Available Models",
-                description=f"Use `model:<id>` in your message or `/ask model: <id>` to select a model.\n\n{model_list}",
-                color=0x00ff00
-            )
-            
-            await message.channel.send(embed=embed)
+            # Try to send as embed first
+            try:
+                embed = discord.Embed(
+                    title="Available Models",
+                    description=f"Use `model:<id>` in your message to select a model.\n\n{model_list}",
+                    color=0x00ff00
+                )
+                await message.channel.send(embed=embed)
+            except:
+                # Fall back to plain text if embeds aren't allowed
+                response = [
+                    "**Available Models**",
+                    "Use `model:<id>` in your message to select a model.",
+                    "",
+                    model_list
+                ]
+                await message.channel.send("\n".join(response))
             
         except Exception as e:
-            await message.channel.send(f"❌ Error fetching models: {str(e)}")
+            error_msg = f"❌ Error fetching models: {str(e)}"
+            if hasattr(e, 'response'):
+                error_msg += f" (Status: {e.response.status})"
+            await message.channel.send(error_msg)
 
     async def command_ask(self, message: discord.Message, args: List[str]):
         """Handle asks and pings with proper error handling and model switching."""
