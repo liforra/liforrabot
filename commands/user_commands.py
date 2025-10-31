@@ -314,10 +314,13 @@ class UserCommands:
             )
             
             try:
-                max_tokens = min(
-                    active_model_obj.get("context_window", 8192),
-                    active_model_obj.get("max_completion_tokens", 8192)
-                )
+                if active_model_obj:
+                    max_tokens = min(
+                        active_model_obj.get("context_window", 8192),
+                        active_model_obj.get("max_completion_tokens", 8192)
+                    )
+                else:
+                    max_tokens = 8192
 
                 completion = client.chat.completions.create(
                     model=active_model,
