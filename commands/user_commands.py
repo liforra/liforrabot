@@ -143,9 +143,8 @@ class UserCommands:
             return self._model_cache["models"]
 
         models = sorted(
-            model.get("id")
-            for model in payload.get("data", [])
-            if isinstance(model, dict) and model.get("id")
+            (model for model in payload.get("data", []) if isinstance(model, dict) and model.get("id")),
+            key=lambda x: x.get("id")
         )
         self._model_cache = {
             "models": models,
@@ -168,14 +167,14 @@ class UserCommands:
         self._cleanup_model_bans()
         self._model_banlist[model_id] = datetime.now(timezone.utc) + self._model_ban_ttl
 
-    def _resolve_model_id(self, requested: Optional[str], available: List[str]) -> Optional[str]:
+    def _resolve_model_id(self, requested: Optional[str], available: List[Dict]) -> Optional[Dict]:
         if not requested:
             return None
         requested_lower = requested.lower()
         for model in available:
-            if model.lower() == requested_lower:
+            if model.get("id", "").lower() == requested_lower:
                 return model
-        return requested
+        return None
 
     async def _generate_luma_response(
         self,
@@ -264,7 +263,13 @@ class UserCommands:
         if not models:
             models = [self.default_model]
 
-        active_model = self._resolve_model_id(requested_model, models) or self.default_model
+        active_model_obj = self._resolve_model_id(requested_model, models)
+        if not active_model_obj:
+            active_model_obj = next((m for m in models if m.get("id") == self.default_model), None)
+        if not active_model_obj:
+            active_model_obj = models[0] if models else None
+
+        active_model = active_model_obj.get("id") if active_model_obj else None
 
         tried_models: set[str] = set()
         response_text = None
@@ -313,11 +318,15 @@ class UserCommands:
             ai_logger.info(f"{active_model}:{question}")
             
             try:
+                max_tokens = active_model_obj.get("context_window", 8192)
+                if "max_completion_tokens" in active_model_obj:
+                    max_tokens = min(max_tokens, active_model_obj["max_completion_tokens"])
+
                 params = {
                     "model": active_model,
                     "messages": messages_payload,
                     "temperature": 1,
-                    "max_tokens": 8192,
+                    "max_tokens": max_tokens,
                     "top_p": 1,
                     "stream": False,
                 }
@@ -373,7 +382,7 @@ class UserCommands:
 
             # Format the model list
             model_list = "\n".join([
-                f"• `{model}" + (" (default)" if model == self.default_model else "") + "`"
+                f"• `{model.get('id')}`" + (" (default)" if model.get('id') == self.default_model else "") + "`"
                 for model in models
             ])
             
