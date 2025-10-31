@@ -318,15 +318,8 @@ class UserCommands:
                     model=active_model,
                     messages=messages_payload,
                     temperature=1,
-                max_tokens = active_model_obj.get("context_window", 8192)
-                if "max_completion_tokens" in active_model_obj:
-                    max_tokens = min(max_tokens, active_model_obj["max_completion_tokens"])
-
-                # The original search was for a 'params' dictionary, which is not used in the current code structure.
-                # The 'max_tokens' calculation is inserted here, and the 'max_tokens' argument in the create call is updated.
-                    max_tokens=max_tokens,
+                    max_tokens=active_model_obj.get("context_window", 8192),
                     top_p=1,
-                    reasoning_effort="medium",
                     stream=False,
                 )
                 response_text = completion.choices[0].message.content
