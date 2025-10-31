@@ -264,7 +264,11 @@ class UserCommands:
         model_used = None
         error_message = None
 
+        logger.debug(f"Initial active_model: {active_model}")
+
         while True:
+            logger.debug(f"Loop start: active_model={active_model}, tried_models={tried_models}")
+
             if not active_model:
                 break
 
@@ -273,12 +277,17 @@ class UserCommands:
                     (m for m in models if m not in tried_models and not self._is_model_banned(m)),
                     None,
                 )
+                logger.debug(f"Fell back to: {active_model}")
+
                 if not active_model:
                     break
 
             tried_models.add(active_model)
 
+            logger.debug(f"Trying model: {active_model}")
+
             if self._is_model_banned(active_model):
+                logger.warning(f"Model {active_model} is banned, skipping")
                 active_model = None
                 continue
 
