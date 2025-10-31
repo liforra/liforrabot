@@ -283,9 +283,16 @@ class UserCommands:
                     None,
                 )
                 if fallback_obj:
-                    active_model = fallback_obj.get("id")
+                    active_model_obj = fallback_obj
+                    active_model = active_model_obj.get("id")
                 else:
+                    error_message = "No available models to try."
                     break
+            
+            if not active_model:
+                error_message = "No available models to try."
+                break
+
             tried_models.add(active_model)
 
             if self._is_model_banned(active_model):
