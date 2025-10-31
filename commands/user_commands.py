@@ -278,12 +278,12 @@ class UserCommands:
 
         while True:
             if active_model in tried_models:
-                fallback = next(
-                    (m for m in models if m not in tried_models and not self._is_model_banned(m)),
+                fallback_obj = next(
+                    (m for m in models if m.get("id") not in tried_models and not self._is_model_banned(m.get("id"))),
                     None,
                 )
-                if fallback:
-                    active_model = fallback
+                if fallback_obj:
+                    active_model = fallback_obj.get("id")
                 else:
                     break
             tried_models.add(active_model)
