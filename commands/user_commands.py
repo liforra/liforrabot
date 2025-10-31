@@ -298,15 +298,7 @@ class UserCommands:
             ]
 
             # Log the request in the format: <model-id>:<message of the user>
-            logger.info(
-                f"{active_model}:{question}",
-                extra={
-                    "user_id": message.author.id,
-                    "user_name": author_display,
-                    "model": active_model,
-                    "is_fallback": active_model != requested_model
-                }
-            )
+            logger.info(f"{active_model}:{question}")
             
             try:
                 completion = client.chat.completions.create(
