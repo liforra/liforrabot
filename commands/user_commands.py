@@ -25,6 +25,13 @@ logger.info("User commands module initialized")
 ai_logger = setup_ai_logger()
 
 
+REASONING_MODELS = {
+    "openai/gpt-oss-20b",
+    "openai/gpt-oss-120b",
+    "openai/gpt-oss-safeguard-20b",
+    "qwen/qwen3-32b",
+}
+
 class UserCommands:
     def __init__(self, bot):
         self.bot = bot
@@ -306,15 +313,18 @@ class UserCommands:
             ai_logger.info(f"{active_model}:{question}")
             
             try:
-                completion = client.chat.completions.create(
-                    model=active_model,
-                    messages=messages_payload,
-                    temperature=1,
-                    max_tokens=8192,
-                    top_p=1,
-                    reasoning_effort="medium",
-                    stream=False,
-                )
+                params = {
+                    "model": active_model,
+                    "messages": messages_payload,
+                    "temperature": 1,
+                    "max_tokens": 8192,
+                    "top_p": 1,
+                    "stream": False,
+                }
+                if active_model in REASONING_MODELS:
+                    params["reasoning_effort"] = "medium"
+
+                completion = client.chat.completions.create(**params)
                 response_text = completion.choices[0].message.content
                 model_used = active_model
                 
