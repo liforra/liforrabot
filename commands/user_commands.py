@@ -442,8 +442,16 @@ class UserCommands:
             )
 
             # Only respond to pings or replies to the bot
-            if not is_pinged and not message.content.startswith(tuple(self.bot.command_prefix)):
-                return
+            if not is_pinged:
+                found_prefix = None
+                for p in self.bot.command_prefix:
+                    if message.content.startswith(p):
+                        found_prefix = p
+                        break
+                if not found_prefix:
+                    return
+            else:
+                found_prefix = ""
 
             # Get the raw content and extract model directive
             raw_content = message.content
@@ -453,10 +461,10 @@ class UserCommands:
             content = re.sub(rf'<@!?{bot_id}>\s*', '', content).strip()
             
             # Remove command prefix and command name if present
-            if content.startswith(tuple(self.bot.command_prefix)):
-                content = content[1:].strip()  # Remove prefix
-                # Remove command name (e.g., 'ask' or '!ask')
-                content = content.split(maxsplit=1)[1] if ' ' in content else ''
+            if found_prefix:
+                content = content[len(found_prefix):].strip()
+                if content.lower().startswith("ask"):
+                    content = content[3:].strip()
 
             # Clean up any extra whitespace
             content = ' '.join(content.split())
