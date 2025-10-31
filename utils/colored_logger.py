@@ -25,9 +25,12 @@ class ColoredFormatter(logging.Formatter):
             levelname_color = self.COLOR_SEQ % (30 + self.COLORS[levelname]) + levelname + self.RESET_SEQ
             record.levelname = levelname_color
             
-        # Handle extra parameters
-        if hasattr(record, 'extra') and record.extra:
-            extras = ' | ' + ' | '.join(f'{k}={v}' for k, v in record.extra.items())
+        # Handle extra parameters - they are stored in record.__dict__
+        extra_attrs = {k: v for k, v in record.__dict__.items() 
+                      if k not in logging.LogRecord('', '', '', '', '', '', '').__dict__}
+        
+        if extra_attrs:
+            extras = ' | ' + ' | '.join(f'{k}={v}' for k, v in extra_attrs.items())
             record.msg = f"{record.msg}{extras}"
             
         return logging.Formatter.format(self, record)
