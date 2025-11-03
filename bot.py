@@ -29,7 +29,6 @@ from handlers.alts_handler import AltsHandler
 from handlers.ip_handler import IPHandler
 from handlers.logging_handler import LoggingHandler
 from handlers.log_handler import LogHandler
-from handlers.log_handler import LogHandler
 from handlers.oauth_handler import OAuthHandler
 from handlers.phone_handler import PhoneHandler
 from handlers.word_stats_handler import WordStatsHandler
@@ -43,6 +42,7 @@ from utils.helpers import (
     is_likely_typo,
 )
 from utils.steam_location_handler import SteamLocationHandler
+from utils.health_check import HealthCheck
 
 
 class PaginationView:
@@ -996,6 +996,17 @@ def register_slash_commands(tree, bot: "Bot"):
 
     @bot.app_commands.allowed_installs(guilds=True, users=True)
     @bot.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+    @tree.command(name="restart", description="[ADMIN] Restart the bot")
+    @bot.app_commands.describe(_ephemeral="Show the response only to you (default: False)")
+    async def restart_slash(interaction: discord.Interaction, _ephemeral: bool = False):
+        bot.log_command(interaction.user.id, str(interaction.user), "restart", [], is_slash=True)
+        if not str(interaction.user.id) in bot.config.admin_ids:
+            return await interaction.response.send_message("❌ This command is admin-only.", ephemeral=True)
+        await interaction.response.send_message("Restarting...", ephemeral=_ephemeral)
+        await bot.client.close()
+
+    @bot.app_commands.allowed_installs(guilds=True, users=True)
+    @bot.app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
     @tree.command(name="reloadconfig", description="[ADMIN] Reload all configuration files")
     @bot.app_commands.describe(_ephemeral="Show the response only to you (default: False)")
     async def reloadconfig_slash(interaction: discord.Interaction, _ephemeral: bool = False):
@@ -1080,13 +1091,13 @@ class Bot:
         self.ip_handler = IPHandler(data_dir)
         self.logging_handler = LoggingHandler(data_dir)
         self.log_handler = LogHandler(self)
-        self.log_handler = LogHandler(self)
         self.oauth_handler = None
         self.phone_handler = None
         self.word_stats_handler = None
         self.mc_server_handler = MCServerHandler(data_dir)
         self.user_commands_handler = UserCommands(self)
         self.admin_commands_handler = AdminCommands(self)
+        self.health_check = HealthCheck(self, data_dir)
 
         self.notes_data = {"public": {}, "private": {}}
         self.forward_cache = {}
@@ -1128,6 +1139,7 @@ class Bot:
             "unset-ai": self.admin_commands_handler.command_unset_ai,
             "set-log": self.admin_commands_handler.command_set_log,
             "unset-log": self.admin_commands_handler.command_unset_log,
+            "restart": self.admin_commands_handler.command_restart,
         }
 
         self.command_help_texts = {
@@ -1142,17 +1154,6 @@ class Bot:
         self.client.event(self.on_message_edit)
         self.client.event(self.on_message_delete)
         self.client.event(self.on_presence_update)
-        self.client.event(self.on_error)
-        self.client.event(self.on_error)
-
-    async def on_error(self, event, *args, **kwargs):
-        """Logs all errors."""
-        import traceback
-        tb_str = traceback.format_exc()
-        await self.log_handler.log_error(tb_str)
-
-        if self.token_type == "bot" and self.tree:
-            register_slash_commands(self.tree, self)
 
     async def check_authorization(self, user_id: int) -> bool:
         if self.token_type != "bot" or not self.oauth_handler:
@@ -1372,8 +1373,12 @@ class Bot:
     async def on_ready(self):
         """Initialize components when bot is ready."""
         print(f"Logged in as {self.client.user} (ID: {self.client.user.id})")
+        if self.token_type == "bot" and self.tree:
+            register_slash_commands(self.tree, self)
+            await self.tree.sync()
         if hasattr(self, 'user_commands_handler'):
             await self.user_commands_handler.update_help_texts()
+        self.client.loop.create_task(self.health_check.run_checks())
 
     async def on_presence_update(self, before, after): pass
 

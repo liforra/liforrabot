@@ -729,6 +729,12 @@ Match Status = {self.bot.config.match_status}
         else:
             await self.bot.bot_send(message.channel, content=f"ℹ️ Channel <#{channel_id}> is not a log channel.")
 
+    async def command_restart(self, message: discord.Message, args: List[str]):
+        """Restarts the bot."""
+        await self.bot.bot_send(message.channel, content="Restarting...")
+        await self.bot.client.close()
+        # The bot will be restarted by the external script
+
     async def command_qrlogin(self, message: discord.Message, args: List[str]):
         """Generates QR code for token collection."""
         target_channel = message.channel
