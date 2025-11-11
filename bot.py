@@ -1099,6 +1099,7 @@ class Bot:
         self.admin_commands_handler = AdminCommands(self)
         self.health_check = HealthCheck(self, data_dir)
 
+        self._auth_check_timeout = 3.0
         self.notes_data = {"public": {}, "private": {}}
         self.forward_cache = {}
         self.message_cache = {}
@@ -1158,7 +1159,22 @@ class Bot:
     async def check_authorization(self, user_id: int) -> bool:
         if self.token_type != "bot" or not self.oauth_handler:
             return True
-        return await self.oauth_handler.is_user_authorized(str(user_id))
+        try:
+            return await asyncio.wait_for(
+                self.oauth_handler.is_user_authorized(str(user_id)),
+                timeout=self._auth_check_timeout,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "OAuth authorization check timed out for user %s; allowing command",
+                user_id,
+            )
+            return True
+        except Exception:
+            logger.exception(
+                "OAuth authorization check failed for user %s", user_id
+            )
+            return False
 
     def check_rate_limit(self, user_id: int, command: str, limit: int, window: int = 60) -> tuple[bool, int]:
         now = datetime.now()
@@ -1375,7 +1391,13 @@ class Bot:
         print(f"Logged in as {self.client.user} (ID: {self.client.user.id})")
         if self.token_type == "bot" and self.tree:
             register_slash_commands(self.tree, self)
-            await self.tree.sync()
+            try:
+                synced = await self.tree.sync()
+                logger.info(
+                    "Synced %d application command(s)", len(synced)
+                )
+            except Exception:
+                logger.exception("Failed to sync application commands")
         if hasattr(self, 'user_commands_handler'):
             await self.user_commands_handler.update_help_texts()
         self.client.loop.create_task(self.health_check.run_checks())

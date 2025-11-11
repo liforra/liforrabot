@@ -6,6 +6,7 @@ import hashlib
 import psutil
 import subprocess
 from pathlib import Path
+from time import monotonic
 
 class HealthCheck:
     def __init__(self, bot, data_dir: Path):
@@ -14,6 +15,12 @@ class HealthCheck:
         self.control_file = self.data_dir / "control.txt"
         self.last_hash = None
         self.pid = os.getpid()
+        self.last_mount_check = 0.0
+        self.remount_backoff = 30.0
+        self.max_backoff = 600.0
+        self.remount_failures = 0
+        self.recovery_command = getattr(self.bot.config, "remount_command", "")
+        self.recovery_method = getattr(self.bot.config, "remount_method", "rclone")
 
     async def run_checks(self):
         """Runs all health checks."""
@@ -23,8 +30,8 @@ class HealthCheck:
                 await self.restart_bot("Bot crashed")
             if not self.check_can_read_files():
                 await self.restart_bot("Cannot read files")
-            if not self.check_mount_remounted():
-                await self.restart_bot("Mount remounted")
+            if not await self.ensure_mount_access():
+                await self.restart_bot("Mount inaccessible")
             if not self.check_control_file():
                 await self.restart_bot("Control file changed")
 
@@ -41,16 +48,64 @@ class HealthCheck:
         except Exception:
             return False
 
-    def check_mount_remounted(self) -> bool:
-        """Checks if the mount where the bot lives has been remounted."""
-        try:
-            mount_output = subprocess.check_output(["mount"], text=True)
-            for line in mount_output.splitlines():
-                if str(self.data_dir) in line and "ro," in line.split(" ")[-2]:
-                    return False
+    async def ensure_mount_access(self) -> bool:
+        """Attempts to verify and restore access to the data directory."""
+        if await asyncio.to_thread(self._test_mount_access):
+            self._reset_remount_state()
             return True
-        except Exception:
-            return True # Assume it's fine if we can't check
+
+        wait_since_last = monotonic() - self.last_mount_check
+        if wait_since_last < self.remount_backoff:
+            return False
+
+        self.last_mount_check = monotonic()
+        self.remount_failures += 1
+        self.remount_backoff = min(self.remount_backoff * 2, self.max_backoff)
+
+        recovery_ok = await self._attempt_recovery()
+        if recovery_ok and await asyncio.to_thread(self._test_mount_access):
+            self._reset_remount_state()
+            return True
+
+        return False
+
+    def _test_mount_access(self) -> bool:
+        try:
+            sentinel = self.data_dir / ".mount_probe"
+            sentinel.write_text("ok", encoding="utf-8")
+            sentinel.unlink(missing_ok=True)
+            return True
+        except OSError:
+            return False
+
+    def _reset_remount_state(self):
+        self.remount_failures = 0
+        self.remount_backoff = 30.0
+        self.last_mount_check = monotonic()
+
+    async def _attempt_recovery(self) -> bool:
+        if not self.recovery_command:
+            await self.bot.log_handler.log_error("Mount access lost; no recovery command configured")
+            return False
+
+        try:
+            proc = await asyncio.create_subprocess_shell(
+                self.recovery_command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await proc.communicate()
+            if proc.returncode == 0:
+                await self.bot.log_handler.log_error(
+                    f"Mount recovery succeeded using '{self.recovery_method}'"
+                )
+                return True
+            await self.bot.log_handler.log_error(
+                f"Mount recovery failed (code {proc.returncode}). stderr: {stderr.decode(errors='ignore')[:500]}"
+            )
+        except Exception as e:
+            await self.bot.log_handler.log_error(f"Mount recovery invocation failed: {type(e).__name__}: {e}")
+        return False
 
     def check_control_file(self) -> bool:
         """Checks if the control file has changed."""
