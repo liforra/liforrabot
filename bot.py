@@ -1281,6 +1281,10 @@ class Bot:
     def censor_text(self, text: str, guild_id: Optional[int] = None) -> str:
         if not text or not isinstance(text, str):
             return ""
+        
+        # Prevent @everyone and @here mentions
+        text = text.replace("@everyone", "@ every one").replace("@here", "@ here")
+
         allow_swears = self.config.get_guild_config(guild_id, "allow-swears", self.config.default_allow_swears)
         allow_slurs = self.config.get_guild_config(guild_id, "allow-slurs", self.config.default_allow_slurs)
         if not allow_slurs:
