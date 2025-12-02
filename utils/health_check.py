@@ -34,6 +34,23 @@ class HealthCheck:
                 await self.restart_bot("Mount inaccessible")
             if not self.check_control_file():
                 await self.restart_bot("Control file changed")
+            if not self.check_io_errors():
+                await self.restart_bot("I/O error detected")
+
+    def check_io_errors(self) -> bool:
+        """Checks for I/O errors on the data directory."""
+        try:
+            # Attempt to read a file that should be accessible
+            with open(self.bot.notes_file, "r") as f:
+                pass
+            return True
+        except OSError as e:
+            if "Transport endpoint is not connected" in str(e) or "Input/output error" in str(e):
+                print(f"!!! I/O error detected: {e} !!!")
+                return False
+            return True # Ignore other OSErrors
+        except Exception:
+            return True # Ignore other exceptions
 
     def check_bot_crashed(self) -> bool:
         """Checks if one of the bots has crashed."""
@@ -137,3 +154,4 @@ class HealthCheck:
         """Restarts the bot."""
         await self.bot.log_handler.log_error(f"Restarting bot: {reason}")
         await self.bot.client.close()
+        sys.exit(1)

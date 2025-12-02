@@ -1,4 +1,4 @@
-"""Entry point for the Discord bot."""
+"Entry point for the Discord bot."
 
 import asyncio
 import hashlib
@@ -109,6 +109,27 @@ async def get_username_from_token(token: str, token_type: str = None) -> Optiona
             except:
                 pass
 
+async def read_token_file(token_file: Path) -> Optional[str]:
+    """Reads a token file with a timeout."""
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(token_file.read_text), 
+            timeout=5.0
+        )
+    except (asyncio.TimeoutError, Exception) as e:
+        print(f"!!! Error reading token file {token_file.name}: {type(e).__name__} !!!")
+        return None
+
+async def notify_owners(bots: list, message: str):
+    """Notifies the bot owners about an error."""
+    owner_ids = [222147134263951361, 324281993219801098]
+    for bot in bots:
+        for owner_id in owner_ids:
+            try:
+                owner = await bot.client.fetch_user(owner_id)
+                await owner.send(message)
+            except Exception as e:
+                print(f"Failed to send notification to owner {owner_id}: {e}")
 
 async def main():
     """Main entry point."""
@@ -127,7 +148,9 @@ async def main():
         token_type_override = main_config.get("token-type", "").lower()
 
         if not token and token_file and Path(token_file).exists():
-            token = Path(token_file).read_text().strip()
+            token = await read_token_file(Path(token_file))
+            if token:
+                token = token.strip()
 
         if token:
             if token_type_override in ["bot", "user"]:
@@ -178,7 +201,12 @@ async def main():
             if not token_file.is_file():
                 continue
 
-            token = token_file.read_text().strip()
+            token = await read_token_file(token_file)
+            if not token:
+                await notify_owners(bots_to_run, f"Failed to read token file: {token_file.name}")
+                continue
+            
+            token = token.strip()
             if not token:
                 continue
 
@@ -202,6 +230,7 @@ async def main():
             print(f"Token type: {token_type}")
 
             hashed_dir = data_dir / token_hash
+            bot_data_dir = None
 
             if hashed_dir.is_dir():
                 bot_data_dir = hashed_dir
@@ -210,44 +239,46 @@ async def main():
                 print(f"Getting username for token...")
                 current_username = await get_username_from_token(token, token_type)
                 if not current_username:
-                    print(f"!!! Could not get username for {token_file.name}, skipping. !!!")
-                    continue
-
-                sanitized_current_user = sanitize_filename(current_username)
-                print(f"Username: {current_username}")
-
-                stored_username = user_map.get(token_hash)
-                if stored_username and stored_username != sanitized_current_user:
-                    old_dir = data_dir / stored_username
-                    new_dir = data_dir / sanitized_current_user
-
-                    if old_dir.is_dir():
-                        print(
-                            f"Username changed for {token_hash}: '{stored_username}' -> '{sanitized_current_user}'. Renaming."
-                        )
-                        try:
-                            os.rename(old_dir, new_dir)
-                            bot_data_dir = new_dir
-                        except OSError as e:
-                            print(
-                                f"!!! Could not rename dir for {token_hash}: {e}. !!!"
-                            )
-                            bot_data_dir = new_dir
-                    else:
-                        bot_data_dir = new_dir
-
-                    user_map[token_hash] = sanitized_current_user
-                    map_updated = True
+                    print(f"!!! Could not get username for {token_file.name}, using hash as fallback. !!!")
+                    bot_data_dir = hashed_dir
                 else:
-                    bot_data_dir = data_dir / sanitized_current_user
-                    if not stored_username:
-                        print(
-                            f"New user '{sanitized_current_user}' for hash {token_hash}. Creating mapping."
-                        )
+                    sanitized_current_user = sanitize_filename(current_username)
+                    print(f"Username: {current_username}")
+
+                    stored_username = user_map.get(token_hash)
+                    if stored_username and stored_username != sanitized_current_user:
+                        old_dir = data_dir / stored_username
+                        new_dir = data_dir / sanitized_current_user
+
+                        if old_dir.is_dir():
+                            print(
+                                f"Username changed for {token_hash}: '{stored_username}' -> '{sanitized_current_user}'. Renaming."
+                            )
+                            try:
+                                os.rename(old_dir, new_dir)
+                                bot_data_dir = new_dir
+                            except OSError as e:
+                                print(
+                                    f"!!! Could not rename dir for {token_hash}: {e}. !!!"
+                                )
+                                bot_data_dir = new_dir
+                        else:
+                            bot_data_dir = new_dir
+
                         user_map[token_hash] = sanitized_current_user
                         map_updated = True
-
+                    else:
+                        bot_data_dir = data_dir / sanitized_current_user
+                        if not stored_username:
+                            print(
+                                f"New user '{sanitized_current_user}' for hash {token_hash}. Creating mapping."
+                            )
+                            user_map[token_hash] = sanitized_current_user
+                            map_updated = True
+            
             if bot_data_dir:
+                if not bot_data_dir.exists():
+                    bot_data_dir.mkdir(parents=True, exist_ok=True)
                 bots_to_run.append(Bot(token=token, data_dir=bot_data_dir, token_type=token_type))
 
         if map_updated:
